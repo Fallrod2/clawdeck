@@ -1,0 +1,11 @@
+node_modules/
+web/node_modules/
+web/dist/
+dist/
+
+.env
+data/
+*.sqlite
+*.sqlite-*
+
+.DS_Store
