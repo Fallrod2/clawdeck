@@ -66,10 +66,33 @@ bun run start   # sert l'API + le front buildé sur BIND_HOST:PORT
 Le dashboard est alors accessible à `http://<BIND_HOST>:<PORT>` (token
 requis, saisi une fois puis stocké côté navigateur).
 
+## Service permanent (launchd)
+
+Pour que le dashboard tourne en continu, indépendamment de toute session
+ouverte (utile avec FileVault activé, qui bloque l'auto-login) :
+`launchd/com.clawdeck.server.plist` définit un `LaunchDaemon` système qui
+lance le backend au boot avec les droits de l'utilisateur `claw`, et le
+relance automatiquement en cas de crash. Les chemins qu'il contient sont
+propres à cette machine (Mac mini, utilisateur `claw`) — à adapter pour un
+autre déploiement.
+
+```bash
+bun run build   # le daemon sert web/dist, donc il faut l'avoir buildé
+
+sudo cp launchd/com.clawdeck.server.plist /Library/LaunchDaemons/com.clawdeck.server.plist
+sudo chown root:wheel /Library/LaunchDaemons/com.clawdeck.server.plist
+sudo launchctl bootstrap system /Library/LaunchDaemons/com.clawdeck.server.plist
+```
+
+Logs : `~/Library/Logs/clawdeck/{stdout,stderr}.log`.
+Statut : `launchctl print system/com.clawdeck.server`.
+Arrêt : `sudo launchctl bootout system/com.clawdeck.server`.
+
 ## Structure
 
 ```
 src/            backend Hono (env, checks HTTP, ping système, SQLite, SSE)
 web/src/        front React (composants, hooks SSE/historique)
 dev.ts          orchestrateur dev (backend + front en parallèle)
+launchd/        service système (LaunchDaemon) pour un fonctionnement permanent
 ```
