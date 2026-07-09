@@ -88,6 +88,19 @@ Logs : `~/Library/Logs/clawdeck/{stdout,stderr}.log`.
 Statut : `launchctl print system/com.clawdeck.server`.
 Arrêt : `sudo launchctl bootout system/com.clawdeck.server`.
 
+## Dépannage
+
+- **`/api/status` renvoie `{"error":"unauthorized"}` en l'ouvrant directement
+  dans le navigateur** : normal, ce n'est pas un bug. Une navigation classique
+  n'envoie pas le header `Authorization`, seul le `fetch()` du front le fait.
+  Il faut passer par `/` (la page du dashboard), pas par l'endpoint API.
+- **Toutes les cartes restent sur "En attente…" / "déconnecté" alors que le
+  backend répond bien en `curl`** : le token stocké côté navigateur est
+  probablement incorrect (mauvais copier-coller). Vérifier dans la console :
+  `localStorage.getItem("clawdeck.token")` — doit renvoyer exactement la
+  valeur d'`AUTH_TOKEN`, rien d'autre. Sinon : `localStorage.removeItem("clawdeck.token")`
+  puis recharger et recoller le bon token.
+
 ## Structure
 
 ```
