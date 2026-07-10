@@ -21,14 +21,22 @@ if (bindHost === "0.0.0.0") {
   );
 }
 
+const gatewayUrl = required("GATEWAY_URL");
+
 export const env = {
   port: Number(process.env.PORT ?? 3001),
   bindHost,
   authToken: required("AUTH_TOKEN"),
-  gatewayUrl: required("GATEWAY_URL"),
+  gatewayUrl,
+  // WS de la gateway OpenClaw (chat) : même host/port que GATEWAY_URL, en ws://.
+  gatewayWsUrl: gatewayUrl.replace(/^http/, "ws").replace(/\/?$/, "/"),
+  // Token partagé de la gateway (gateway.auth.token dans ~/.openclaw/openclaw.json),
+  // distinct de notre propre AUTH_TOKEN.
+  gatewayAuthToken: required("GATEWAY_AUTH_TOKEN"),
   ollamaUrl: process.env.OLLAMA_URL ?? "http://127.0.0.1:11434",
   ollamaFallbackModel: process.env.OLLAMA_FALLBACK_MODEL ?? "qwen3.5:9b",
   // Si vide, auto-détectée via `route -n get default` (voir network.ts).
   orangeGatewayIp: process.env.ORANGE_GATEWAY_IP || null,
   dbPath: process.env.DB_PATH ?? "./data/clawdeck.sqlite",
+  gatewayDeviceIdentityPath: process.env.GATEWAY_DEVICE_IDENTITY_PATH ?? "./data/gateway-device-identity.json",
 };

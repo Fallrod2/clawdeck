@@ -10,16 +10,19 @@ Voir `CLAUDE.md` pour le contexte complet et les règles d'architecture.
 
 - **Backend** : Bun + Hono (TypeScript) — sert aussi le front buildé
 - **Front** : React + Vite + Tailwind (thème sombre), dans `/web`
-- **Temps réel** : SSE pour les statuts (`/api/status`)
-- **Persistance** : SQLite (`bun:sqlite`) — historique des pings uniquement
+- **Temps réel** : SSE pour les statuts (`/api/status`), WebSocket relayé pour le chat (`/api/chat/ws`)
+- **Persistance** : SQLite (`bun:sqlite`) — historique des pings uniquement (le chat n'est jamais dupliqué, voir `chat.history` de la gateway)
 - **Réseau** : bind sur 127.0.0.1 ou une IP Tailscale, jamais `0.0.0.0`
 
 ## État actuel
 
-Phase 1 (MVP) en place : health panel avec statut de la gateway OpenClaw,
-d'Ollama (et de son modèle de fallback), pings vers Cloudflare et la
-passerelle réseau, graphe de latence 24h/7j. Le chat (phase 2) n'est pas
-encore implémenté.
+Phase 1 (health panel) et phase 2 (chat) en place :
+- Statut de la gateway OpenClaw, d'Ollama (et de son modèle de fallback),
+  pings vers Cloudflare et la passerelle réseau, graphe de latence 24h/7j.
+- Chat riche : le backend maintient une connexion WS authentifiée par
+  identité d'appareil vers la gateway OpenClaw (`src/gateway/`) et la relaie
+  au front (markdown, tool calls visibles, streaming). Voir
+  `docs/gateway/protocol.md` du paquet `openclaw` pour le protocole complet.
 
 ## Prérequis
 
@@ -41,8 +44,15 @@ cp .env.example .env
 Éditer `.env` :
 - `AUTH_TOKEN` — génère une valeur aléatoire (`openssl rand -hex 32`)
 - `GATEWAY_URL` — URL de la gateway OpenClaw locale (ex. `http://127.0.0.1:18789`)
+- `GATEWAY_AUTH_TOKEN` — le `gateway.auth.token` de `~/.openclaw/openclaw.json`
+  (nécessaire pour le chat, distinct d'`AUTH_TOKEN`)
 - `BIND_HOST` — `127.0.0.1` en local, ou l'IP Tailscale du Mac mini
   (`tailscale ip -4`) pour un accès distant
+
+Le premier démarrage crée une identité d'appareil Ed25519
+(`data/gateway-device-identity.json`, non commitée) pour s'authentifier
+auprès de la gateway OpenClaw — rien à faire manuellement, mais si ce
+fichier est supprimé la gateway le traitera comme un nouvel appareil.
 
 ## Développement
 
@@ -105,7 +115,8 @@ Arrêt : `sudo launchctl bootout system/com.clawdeck.server`.
 
 ```
 src/            backend Hono (env, checks HTTP, ping système, SQLite, SSE)
-web/src/        front React (composants, hooks SSE/historique)
+src/gateway/    client WS vers la gateway OpenClaw (auth device, chat)
+web/src/        front React (composants, hooks SSE/historique/chat)
 dev.ts          orchestrateur dev (backend + front en parallèle)
 launchd/        service système (LaunchDaemon) pour un fonctionnement permanent
 ```
