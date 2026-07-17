@@ -90,25 +90,42 @@ chat ne sont pas fiables tant qu'elles ne sont pas terminées.
   vérifié en réel), texte de chat borné à `MAX_CHAT_TEXT_LENGTH` (8 000
   caractères) avec erreur explicite au client. Le typage strict des formes de
   messages reste couvert par l'item P2 « types des frames ».
-- [ ] Stabiliser le client gateway selon le protocole OpenClaw installé.
-  - [x] Watchdog de handshake (fait le 2026-07-17) : socket fermé après
-    `HANDSHAKE_TIMEOUT_MS` (10 s) sans `connect-ok`, retour au chemin normal
-    onclose → reconnexion ; timer lié à son socket ; testé via `socketFactory`
-    injectable (`src/gateway/client.test.ts`).
-  - [x] Jitter sur le backoff de reconnexion (facteur 0,5-1,0, fait le
-    2026-07-17).
-  - Négocier la plage de protocoles supportée (actuellement v3-v4) au lieu de
-    forcer v4, puis vérifier le protocole réellement négocié.
-  - Exploiter `hello-ok.features` avant d'appeler une méthode optionnelle et
-    respecter les limites annoncées dans `hello-ok.policy`.
-  - [x] Timeout par RPC (fait, `client.ts`) ; reste : traiter `connect`
-    refusé, `UNAVAILABLE` et `retryAfterMs`.
-  - [x] Remise à zéro de la route de livraison à la déconnexion (fait,
-    `client.ts:104-110`) ; reste : désabonnement propre à l'arrêt.
-  - Suivre `seq`; en cas de trou, recharger `health`, les sessions et
-    l'historique au lieu de supposer que les événements sont complets.
-  - Auditer les scopes, documenter pourquoi `operator.admin` est nécessaire et
-    le supprimer si la livraison WhatsApp fonctionne avec moins de privilèges.
+- [x] Stabiliser le client gateway selon le protocole OpenClaw installé
+  (terminé le 2026-07-17, spec vérifiée dans le paquet installé —
+  `/opt/homebrew/lib/node_modules/openclaw/docs/gateway/protocol.md` — et
+  connexion validée en live contre la gateway réelle v2026.7.1).
+  - [x] Watchdog de handshake (10 s, timer lié à son socket, testé via
+    `socketFactory` injectable) et jitter 0,5-1,0 sur le backoff.
+  - [x] Protocole négocié vérifié : `hello-ok.payload.protocol` doit tomber
+    dans [3, 4], sinon fermeture explicite (jamais « connecté » sur un
+    dialecte inconnu).
+  - [x] `hello-ok.features.methods` : découverte conservatrice stockée, gating
+    de toutes nos méthodes (`request` rejette tôt, `setupSession` gate
+    explicitement, `LogTailer.supportsLogs` saute sans erreur répétée) ;
+    fail-open si la liste est absente.
+  - [x] `hello-ok.policy.tickIntervalMs` : watchdog de vivacité — fermeture
+    code 4000 après 2 × l'intervalle sans frame entrante (comme le client de
+    référence), réarmé à chaque frame, fallback 30 s.
+  - [x] Échecs de `connect` : `retryAfterMs` honoré tel quel (sans gonfler le
+    backoff, ex. `UNAVAILABLE` « startup-sidecars ») ;
+    `AUTH_TOKEN_MISMATCH`/`AUTH_SCOPE_MISMATCH` → message opérateur clair et
+    reconnexion automatique suspendue jusqu'à `start()`, conformément à la
+    spec.
+  - [x] Timeout par RPC.
+  - [x] Suivi `seq` par connexion : trou → un événement `resync` (unique par
+    trou) qui resonde immédiatement l'état OpenClaw ; recul = nouveau flux,
+    adopté sans bruit.
+  - [x] Remise à zéro de la route de livraison et de tout l'état négocié à la
+    déconnexion ; désabonnement `sessions.messages.unsubscribe` best-effort à
+    l'arrêt.
+  - [x] Audit des scopes tranché par les sources de la gateway
+    (core-descriptors) : `chat.send` + route d'origine = `operator.write`,
+    tout le reste = `operator.read` → `operator.admin` retiré. Conséquence
+    assumée : un slash-command d'administration tapé dans le chat est refusé
+    par la gateway (moindre privilège). Le RPC `status` réservant le détail
+    provider/modèle aux clients admin, la lecture bascule sur
+    `sessions.list` + `agents.list` (read) — vérifié en live : provider et
+    modèle actifs de nouveau remontés avec les scopes réduits.
 - [x] Ajouter un arrêt propre : stopper la gateway et les timers, terminer les
   flux SSE/WS et fermer SQLite sur `SIGTERM`/`SIGINT`.
 
@@ -297,8 +314,14 @@ justifie.
 
 ## Prochain jalon conseillé
 
-Le prochain lot doit couvrir tout P0, les tests unitaires associés et la boucle
-de collecte centrale. Il est terminé quand un daemon sans navigateur ouvert
-continue d'échantillonner le réseau, qu'ouvrir plusieurs onglets ne multiplie
-pas les sondes, qu'une gateway muette ne bloque aucune boucle et que chaque RPC
-échoue ou se reconnecte dans un délai borné.
+P0 est terminé au complet (2026-07-17) : validation env/entrées, client
+gateway conforme à la spec du paquet installé (protocole vérifié, features,
+tick, retryAfterMs, seq, scopes minimaux), collecte découplée, arrêt propre —
+le tout testé (57 tests) et validé en live contre la gateway réelle.
+
+Le prochain lot logique est le duo P1 « honnêteté visuelle » + P2 « chat
+fiable » : badge d'âge/péremption et backoff des reconnexions front d'un côté,
+`clientMessageId` + accusés d'envoi + fermeture 1008 côté chat de l'autre.
+Redémarrer le service launchd sur ce commit avant d'attaquer la suite, pour
+faire tourner la prod sur le client durci (vérifier d'abord la force
+d'`AUTH_TOKEN` dans `.env` : la validation refuse désormais un token faible).
