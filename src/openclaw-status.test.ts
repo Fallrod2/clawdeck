@@ -8,15 +8,20 @@ function source(overrides: Partial<OpenClawStatusSource> = {}): OpenClawStatusSo
     uptimeMs: 123_000,
     mainSessionKey: "agent:main:main",
     getHealthSnapshot: async () => ({ ok: true, ts: 1_000, durationMs: 32 }),
-    getStatusSummary: async () => ({
-      sessions: {
-        recent: [{
-          key: "agent:main:main",
-          model: "qwen3.5:9b",
-          selectedModel: "ollama/qwen3.5:9b",
-          configuredModel: "openai/gpt-5.4",
-        }],
-      },
+    // Ligne sessions.list de la session principale (forme réelle observée
+    // sur la gateway installée : modelProvider + model + agentRuntime).
+    getMainSessionEntry: async () => ({
+      key: "agent:main:main",
+      modelProvider: "ollama",
+      model: "qwen3.5:9b",
+      agentRuntime: { id: "codex", source: "implicit" },
+    }),
+    // agents.list : modèle configuré (primary) et fallbacks de l'agent.
+    getAgentsSummary: async () => ({
+      agents: [{
+        id: "main",
+        model: { primary: "openai/gpt-5.4", fallbacks: ["ollama/qwen3.5:9b"] },
+      }],
     }),
     getWhatsAppStatus: async () => ({
       channels: {
@@ -85,6 +90,20 @@ describe("readOpenClawRuntime", () => {
     expect(result.connected).toBe(false);
     expect(result.healthy).toBe(false);
     expect(result.whatsapp.healthy).toBeNull();
+  });
+
+  test("laisse le modèle configuré à null quand agents.list échoue", async () => {
+    const result = await readOpenClawRuntime(source({
+      getAgentsSummary: async () => {
+        throw new Error("agents unavailable");
+      },
+    }));
+
+    expect(result.provider).toBe("ollama");
+    expect(result.model).toBe("qwen3.5:9b");
+    expect(result.configuredModel).toBeNull();
+    expect(result.usingFallback).toBeNull();
+    expect(result.error).toBe("agents unavailable");
   });
 
   test("keeps partial data when one RPC fails", async () => {

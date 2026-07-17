@@ -7,7 +7,8 @@ export interface OpenClawStatusSource {
   readonly uptimeMs: number | null;
   readonly mainSessionKey: string | null;
   getHealthSnapshot(): Promise<unknown>;
-  getStatusSummary(): Promise<unknown>;
+  getMainSessionEntry(): Promise<unknown>;
+  getAgentsSummary(): Promise<unknown>;
   getWhatsAppStatus(): Promise<unknown>;
   getConfiguredModels(): Promise<unknown>;
 }
@@ -121,24 +122,43 @@ export async function readOpenClawRuntime(
 
   const results = await Promise.allSettled([
     source.getHealthSnapshot(),
-    source.getStatusSummary(),
+    source.getMainSessionEntry(),
     source.getWhatsAppStatus(),
     source.getConfiguredModels(),
+    source.getAgentsSummary(),
   ]);
   const health = record(settledValue(results[0]!));
-  const status = record(settledValue(results[1]!));
+  const sessionEntry = record(settledValue(results[1]!));
   const channels = record(settledValue(results[2]!));
   const modelsPayload = record(settledValue(results[3]!));
+  const agentsPayload = settledValue(results[4]!);
 
-  const sessions = record(status?.sessions);
-  const recent = Array.isArray(sessions?.recent) ? sessions.recent.map(record).filter(Boolean) : [];
-  const activeSession = recent.find((entry) => entry?.key === source.mainSessionKey) ?? recent[0] ?? null;
-  const selectedRef =
-    stringValue(activeSession?.selectedModel) ??
-    stringValue(activeSession?.configuredModel) ??
-    stringValue(activeSession?.model);
-  const selected = splitModelRef(selectedRef);
-  const configuredModel = stringValue(activeSession?.configuredModel);
+  // Couple actif : champs de la ligne sessions.list (operator.read). Repli
+  // sur les formes historiques selectedModel/model si la gateway installée
+  // ne les expose pas ainsi.
+  const activeProvider = stringValue(sessionEntry?.modelProvider);
+  const activeModel = stringValue(sessionEntry?.model);
+  const legacyRef = splitModelRef(
+    stringValue(sessionEntry?.selectedModel) ?? stringValue(sessionEntry?.configuredModel),
+  );
+  const selected = {
+    provider: activeProvider ?? legacyRef.provider,
+    model: activeModel ?? legacyRef.model,
+  };
+  const selectedRef = selected.provider && selected.model
+    ? `${selected.provider}/${selected.model}`
+    : selected.model;
+
+  // Modèle configuré : model.primary de l'agent par défaut (agents.list,
+  // operator.read) — première entrée, l'agent principal du poste.
+  const agentRows = Array.isArray(agentsPayload)
+    ? agentsPayload.map(record).filter(Boolean)
+    : Array.isArray(record(agentsPayload)?.agents)
+      ? (record(agentsPayload)!.agents as unknown[]).map(record).filter(Boolean)
+      : [];
+  const agentModel = record(agentRows[0]?.model);
+  const configuredModel =
+    stringValue(agentModel?.primary) ?? stringValue(agentRows[0]?.model);
   const configured = splitModelRef(configuredModel);
 
   const models = Array.isArray(modelsPayload?.models)

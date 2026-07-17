@@ -92,4 +92,33 @@ describe("LogTailer", () => {
     expect(calls).toBeGreaterThanOrEqual(1);
     expect(events).not.toContain("error");
   });
+
+  test("saute silencieusement quand la source n'annonce pas logs.tail", async () => {
+    let calls = 0;
+    const events: string[] = [];
+    const source = {
+      isConnected: true,
+      supportsLogs: false,
+      async getLogs() {
+        calls += 1;
+        return { cursor: 3, size: 3, lines: ["{}"], truncated: false, reset: false };
+      },
+    };
+    const tailer = new LogTailer(source, 10);
+    const unsubscribe = tailer.subscribe((event) => events.push(event.type));
+
+    // Gateway connectée mais logs.tail non annoncé : aucune lecture, aucun
+    // événement — surtout pas une erreur répétée à chaque tick.
+    await Bun.sleep(50);
+    expect(calls).toBe(0);
+    expect(events).toEqual([]);
+
+    // Une découverte ultérieure qui annonce logs.tail relance le poll.
+    source.supportsLogs = true;
+    await waitFor(() => events.includes("data"));
+    unsubscribe();
+    await tailer.stop();
+
+    expect(events).not.toContain("error");
+  });
 });

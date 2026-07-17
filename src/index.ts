@@ -216,6 +216,9 @@ gateway.on("status", (status: { connected: boolean; error?: string }) => {
 gateway.on("chat", (payload: unknown) => broadcast({ type: "chat", payload }));
 gateway.on("agent", (payload: unknown) => broadcast({ type: "agent", payload }));
 gateway.on("session-message", (payload: unknown) => broadcast({ type: "session-message", payload }));
+// Trou de seq sur la connexion gateway : des événements ont pu être manqués,
+// on resonde immédiatement l'état OpenClaw.
+gateway.on("resync", () => openclawCollector.refresh());
 
 openclawCollector.subscribe(() => statusCollector.refresh());
 gateway.start();
