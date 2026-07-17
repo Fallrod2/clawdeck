@@ -220,13 +220,14 @@ export function useChat(token: string | null) {
 
   const send = useCallback((text: string) => {
     const trimmed = text.trim();
-    if (!trimmed || wsRef.current?.readyState !== WebSocket.OPEN) return;
+    if (!trimmed || wsRef.current?.readyState !== WebSocket.OPEN || !gatewayConnected) return false;
     setMessages((prev) => [
       ...prev,
       { id: `local-${localId()}`, role: "user", text: trimmed, timestamp: Date.now(), pending: false, toolCalls: [] },
     ]);
     wsRef.current.send(JSON.stringify({ type: "send", text: trimmed }));
-  }, []);
+    return true;
+  }, [gatewayConnected]);
 
   return { messages, wsState, gatewayConnected, send };
 }

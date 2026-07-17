@@ -6,16 +6,34 @@ import { serveStatic, upgradeWebSocket, websocket } from "hono/bun";
 import { streamSSE } from "hono/streaming";
 import type { WSContext } from "hono/ws";
 import { env } from "./env";
-import { checkGateway, checkOllama } from "./checks";
-import { ping, detectDefaultGateway } from "./network";
-import { insertPing, pruneOldPings, getPingHistoryBucketed } from "./db";
+import { closeDatabase, pruneOldPings, getPingHistoryBucketed } from "./db";
 import { GatewayClient } from "./gateway/client";
+import { collectStatus, type StatusPayload } from "./status";
+import { StatusCollector } from "./status-collector";
+import { LogTailer } from "./log-tailer";
+import { normalizeLogTail, type DashboardLogEntry } from "./logs";
+import {
+  readOpenClawRuntime,
+  unavailableOpenClawRuntime,
+} from "./openclaw-status";
 
-const CLOUDFLARE_HOST = "1.1.1.1";
 const POLL_INTERVAL_MS = 5000;
-const DEFAULT_ORANGE_GATEWAY = "192.168.1.1";
 
 const app = new Hono();
+const gateway = new GatewayClient(env.gatewayWsUrl, env.gatewayAuthToken, env.gatewayDeviceIdentityPath);
+const logTailer = new LogTailer(gateway);
+const openclawCollector = new StatusCollector(() => readOpenClawRuntime(gateway), {
+  intervalMs: 15_000,
+  onError: (error) => console.error(`[openclaw] collection failed: ${error.message}`),
+});
+const statusCollector = new StatusCollector(() => collectStatus(
+  gateway.isConnected
+    ? openclawCollector.current ?? unavailableOpenClawRuntime(gateway, "OpenClaw status pending")
+    : unavailableOpenClawRuntime(gateway),
+), {
+  intervalMs: POLL_INTERVAL_MS,
+  onError: (error) => console.error(`[status] collection failed: ${error.message}`),
+});
 
 // Auth bearer sur toute l'API (token depuis .env, jamais commité).
 // Exception : /api/chat/ws, dont le handshake WS ne peut pas poser de header
@@ -33,52 +51,119 @@ app.use("/api/*", async (c, next) => {
   await next();
 });
 
-async function collectStatus() {
-  const orangeGatewayIp =
-    env.orangeGatewayIp ??
-    (await detectDefaultGateway()) ??
-    DEFAULT_ORANGE_GATEWAY;
-
-  const [gateway, ollama, cloudflarePing, orangePing] = await Promise.all([
-    checkGateway(env.gatewayUrl),
-    checkOllama(env.ollamaUrl, env.ollamaFallbackModel),
-    ping(CLOUDFLARE_HOST),
-    ping(orangeGatewayIp),
-  ]);
-
-  insertPing("cloudflare", CLOUDFLARE_HOST, cloudflarePing.ok, cloudflarePing.latencyMs);
-  insertPing("orange", orangeGatewayIp, orangePing.ok, orangePing.latencyMs);
-
-  return {
-    timestamp: Date.now(),
-    gateway,
-    ollama,
-    ping: {
-      cloudflare: { host: CLOUDFLARE_HOST, ...cloudflarePing },
-      orange: { host: orangeGatewayIp, ...orangePing },
-    },
-  };
-}
-
-// Stream l'état complet toutes les 5s.
+// Chaque client reçoit le dernier snapshot puis les mises à jour de l'unique
+// boucle backend. Une connexion SSE ne déclenche jamais elle-même de sonde.
 app.get("/api/status", (c) => {
   return streamSSE(c, async (stream) => {
     let closed = false;
-    stream.onAbort(() => {
-      closed = true;
+    let pending: StatusPayload | null = null;
+    let wake: (() => void) | null = null;
+
+    const unsubscribe = statusCollector.subscribe((snapshot) => {
+      // Un client lent ne garde que le snapshot le plus récent.
+      pending = snapshot;
+      const resolve = wake;
+      wake = null;
+      resolve?.();
     });
 
-    while (!closed) {
-      try {
-        const payload = await collectStatus();
-        await stream.writeSSE({ data: JSON.stringify(payload), event: "status" });
-      } catch (err) {
+    stream.onAbort(() => {
+      closed = true;
+      const resolve = wake;
+      wake = null;
+      resolve?.();
+    });
+
+    try {
+      while (!closed) {
+        if (!pending) {
+          await new Promise<void>((resolve) => {
+            wake = resolve;
+          });
+        }
+        if (closed) break;
+        const snapshot = pending;
+        pending = null;
+        if (!snapshot) continue;
         await stream.writeSSE({
-          data: JSON.stringify({ error: (err as Error).message }),
-          event: "error",
+          data: JSON.stringify(snapshot),
+          event: "status",
         });
       }
-      if (!closed) await stream.sleep(POLL_INTERVAL_MS);
+    } finally {
+      unsubscribe();
+    }
+  });
+});
+
+// Tail borné et redigé par OpenClaw, normalisé puis relayé sans persistance.
+app.get("/api/logs", (c) => {
+  return streamSSE(c, async (stream) => {
+    let closed = false;
+    let pending: DashboardLogEntry[] = [];
+    let pendingReset = false;
+    let pendingTruncated = false;
+    let pendingError: string | null = null;
+    let wake: (() => void) | null = null;
+
+    const notify = () => {
+      const resolve = wake;
+      wake = null;
+      resolve?.();
+    };
+    const unsubscribe = logTailer.subscribe((event) => {
+      if (event.type === "error") {
+        pendingError = event.message;
+        notify();
+        return;
+      }
+      if (event.result.reset) pending = [];
+      pending.push(...normalizeLogTail(event.result));
+      if (pending.length > 500) {
+        pending = pending.slice(-500);
+        pendingTruncated = true;
+      }
+      pendingReset ||= event.result.reset;
+      pendingTruncated ||= event.result.truncated;
+      notify();
+    });
+
+    stream.onAbort(() => {
+      closed = true;
+      notify();
+    });
+
+    try {
+      while (!closed) {
+        if (!pending.length && !pendingError && !pendingReset && !pendingTruncated) {
+          await new Promise<void>((resolve) => {
+            wake = resolve;
+          });
+        }
+        if (closed) break;
+        if (pendingError) {
+          const message = pendingError;
+          pendingError = null;
+          await stream.writeSSE({
+            event: "error",
+            data: JSON.stringify({ message }),
+          });
+        }
+        if (pending.length || pendingReset || pendingTruncated) {
+          const entries = pending;
+          const reset = pendingReset;
+          const truncated = pendingTruncated;
+          pending = [];
+          pendingReset = false;
+          pendingTruncated = false;
+          await stream.writeSSE({
+            event: "logs",
+            data: JSON.stringify({ entries, reset, truncated }),
+          });
+        }
+      }
+    } finally {
+      unsubscribe();
     }
   });
 });
@@ -98,15 +183,13 @@ app.get("/api/pings/history", (c) => {
 
 // Rétention 7 jours (voir RETENTION_MS dans db.ts).
 pruneOldPings();
-setInterval(pruneOldPings, 60 * 60 * 1000);
+const pruneTimer = setInterval(pruneOldPings, 60 * 60 * 1000);
 
 // --- Chat (phase 2) : relais WS entre le front et la gateway OpenClaw ---
 // Le dashboard ne maintient qu'UNE connexion vers la gateway (auth par
 // identité d'appareil, voir gateway/client.ts) et la relaie à tous les
 // clients navigateur authentifiés — cohérent avec l'auth bearer du reste
 // de l'API, un navigateur ne pouvant pas poser de header sur un handshake WS.
-const gateway = new GatewayClient(env.gatewayWsUrl, env.gatewayAuthToken, env.gatewayDeviceIdentityPath);
-gateway.start();
 
 const chatClients = new Set<WSContext>();
 const AUTH_TIMEOUT_MS = 5000;
@@ -124,10 +207,16 @@ function broadcast(msg: unknown) {
 
 gateway.on("status", (status: { connected: boolean; error?: string }) => {
   broadcast({ type: "gateway-status", ...status });
+  openclawCollector.refresh();
 });
 gateway.on("chat", (payload: unknown) => broadcast({ type: "chat", payload }));
 gateway.on("agent", (payload: unknown) => broadcast({ type: "agent", payload }));
 gateway.on("session-message", (payload: unknown) => broadcast({ type: "session-message", payload }));
+
+openclawCollector.subscribe(() => statusCollector.refresh());
+gateway.start();
+openclawCollector.start();
+statusCollector.start();
 
 app.get(
   "/api/chat/ws",
@@ -184,11 +273,62 @@ app.get(
 app.use("/*", serveStatic({ root: "./web/dist" }));
 app.get("*", serveStatic({ path: "./web/dist/index.html" }));
 
-console.log(`clawdeck backend → http://${env.bindHost}:${env.port}`);
-
-export default {
+const server = Bun.serve({
   port: env.port,
   hostname: env.bindHost,
   fetch: app.fetch,
   websocket,
-};
+});
+
+let shuttingDown = false;
+async function shutdown(signal: string) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`[shutdown] ${signal} received`);
+  clearInterval(pruneTimer);
+  for (const ws of chatClients) {
+    try {
+      ws.close(1001, "server shutting down");
+    } catch {
+      // La fermeture continue pour les autres ressources.
+    }
+  }
+  chatClients.clear();
+  try {
+    gateway.stop();
+  } catch (error) {
+    console.error(`[shutdown] gateway: ${(error as Error).message}`);
+  }
+  try {
+    await logTailer.stop();
+  } catch (error) {
+    console.error(`[shutdown] logs: ${(error as Error).message}`);
+  }
+  try {
+    await statusCollector.stop();
+  } catch (error) {
+    console.error(`[shutdown] collector: ${(error as Error).message}`);
+  }
+  try {
+    await openclawCollector.stop();
+  } catch (error) {
+    console.error(`[shutdown] OpenClaw collector: ${(error as Error).message}`);
+  }
+  try {
+    await server.stop(true);
+  } catch (error) {
+    console.error(`[shutdown] server: ${(error as Error).message}`);
+  }
+  try {
+    closeDatabase();
+  } catch (error) {
+    console.error(`[shutdown] database: ${(error as Error).message}`);
+  }
+  console.log("[shutdown] complete");
+  process.exit(0);
+}
+
+process.once("SIGINT", () => void shutdown("SIGINT"));
+process.once("SIGTERM", () => void shutdown("SIGTERM"));
+
+console.log(`clawdeck backend → http://${env.bindHost}:${env.port}`);

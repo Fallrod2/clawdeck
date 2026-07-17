@@ -5,6 +5,7 @@ Dashboard temps réel self-hosted pour superviser une instance OpenClaw locale
 headless, accessible uniquement via Tailscale.
 
 Voir `CLAUDE.md` pour le contexte complet et les règles d'architecture.
+Les règles visuelles et d'interaction sont dans `docs/UI_UX.md`.
 
 ## Stack
 
@@ -17,8 +18,11 @@ Voir `CLAUDE.md` pour le contexte complet et les règles d'architecture.
 ## État actuel
 
 Phase 1 (health panel) et phase 2 (chat) en place :
-- Statut de la gateway OpenClaw, d'Ollama (et de son modèle de fallback),
-  pings vers Cloudflare et la passerelle réseau, graphe de latence 24h/7j.
+- Statut HTTP + RPC de la gateway OpenClaw, provider/modèle réellement actif,
+  état WhatsApp, Ollama et son modèle de fallback, pings vers Cloudflare et la
+  passerelle réseau, graphe de latence 24h/7j.
+- Tail SSE des logs OpenClaw via `logs.tail`, filtré par la gateway, borné en
+  mémoire et jamais persisté par clawdeck.
 - Chat riche : le backend maintient une connexion WS authentifiée par
   identité d'appareil vers la gateway OpenClaw (`src/gateway/`) et la relaie
   au front (markdown, tool calls visibles, streaming). Voir
@@ -65,6 +69,15 @@ Lance le backend (`--watch`) et le serveur Vite en parallèle. Le front dev
 
 Le serveur dev Vite n'écoute que sur `localhost` — pour tester l'accès
 réseau (Tailscale), utiliser le build de prod (voir ci-dessous).
+
+## Vérifications
+
+```bash
+bun run test       # tests unitaires Bun
+bun run typecheck  # backend + frontend
+bun run lint       # frontend
+bun run check      # tous les checks puis le build de production
+```
 
 ## Build & production
 
@@ -114,9 +127,10 @@ Arrêt : `sudo launchctl bootout system/com.clawdeck.server`.
 ## Structure
 
 ```
-src/            backend Hono (env, checks HTTP, ping système, SQLite, SSE)
+src/            backend Hono (collecteurs statut/logs, checks, ping, SQLite, SSE)
 src/gateway/    client WS vers la gateway OpenClaw (auth device, chat)
 web/src/        front React (composants, hooks SSE/historique/chat)
+docs/           règles produit et UI/UX durables
 dev.ts          orchestrateur dev (backend + front en parallèle)
 launchd/        service système (LaunchDaemon) pour un fonctionnement permanent
 ```

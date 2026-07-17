@@ -5,7 +5,11 @@
   "scripts": {
     "dev": "bun dev.ts",
     "start": "bun src/index.ts",
-    "build": "bun run --cwd web build"
+    "build": "bun run --cwd web build",
+    "typecheck": "bunx tsc --noEmit && bun run --cwd web typecheck",
+    "lint": "bun run --cwd web lint",
+    "test": "bun test",
+    "check": "bun run typecheck && bun run lint && bun run test && bun run build"
   },
   "dependencies": {
     "hono": "^4.6.0"

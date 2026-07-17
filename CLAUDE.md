@@ -19,6 +19,14 @@ uniquement). Il observe et pilote une instance OpenClaw locale
 - Auth : bearer token depuis .env (jamais commité)
 - Pas de dépendance lourde sans justification ; préférer la stdlib Bun
 
+## Règles UI/UX
+- `docs/UI_UX.md` est la référence obligatoire pour toute évolution du front
+- Console d'exploitation calme : état global, anomalies, puis détails
+- Statuts toujours exprimés par libellé + symbole + couleur ; gérer chargement,
+  vide, erreur, déconnexion et données périmées
+- Interface française, responsive dès 320 px, clavier/tactile et focus visible
+- Réutiliser les tokens/composants existants plutôt que créer un style local
+
 ## Phases
 1. MVP : health panel (gateway/Ollama/WhatsApp), provider actif,
    log tail SSE, moniteur réseau (ping + graphe 7j, SQLite)

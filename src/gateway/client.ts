@@ -11,7 +11,8 @@ import { EventEmitter } from "node:events";
 import { loadOrCreateDeviceIdentity, publicKeyWireFormat, signPayload, type DeviceIdentity } from "./device-identity";
 import { buildDeviceAuthPayloadV3 } from "./protocol";
 
-const PROTOCOL_VERSION = 4;
+const MIN_PROTOCOL_VERSION = 3;
+const MAX_PROTOCOL_VERSION = 4;
 const CLIENT_ID = "gateway-client";
 const CLIENT_MODE = "backend";
 const CLIENT_PLATFORM = "web";
@@ -23,10 +24,20 @@ const ROLE = "operator";
 const SCOPES = ["operator.read", "operator.write", "operator.admin"];
 const RECONNECT_BASE_MS = 1000;
 const RECONNECT_MAX_MS = 30_000;
+const REQUEST_TIMEOUT_MS = 5_000;
 
 interface PendingRequest {
   resolve: (payload: unknown) => void;
   reject: (err: Error) => void;
+  timer: ReturnType<typeof setTimeout>;
+}
+
+export interface GatewayLogTailResult {
+  cursor: number;
+  size: number;
+  lines: string[];
+  truncated: boolean;
+  reset: boolean;
 }
 
 // Route de livraison d'une session vers son canal d'origine (ex. WhatsApp),
@@ -48,6 +59,8 @@ export class GatewayClient extends EventEmitter {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private closedByUs = false;
   private deliveryRoute: DeliveryRoute | null = null;
+  private serverVersion: string | null = null;
+  private serverUptimeMs: number | null = null;
   mainSessionKey: string | null = null;
 
   constructor(
@@ -92,6 +105,9 @@ export class GatewayClient extends EventEmitter {
       const wasConnected = this.connected;
       this.connected = false;
       this.mainSessionKey = null;
+      this.deliveryRoute = null;
+      this.serverVersion = null;
+      this.serverUptimeMs = null;
       this.rejectAllPending(new Error("gateway connection closed"));
       if (wasConnected) this.emit("status", { connected: false });
       if (!this.closedByUs) this.scheduleReconnect();
@@ -119,6 +135,7 @@ export class GatewayClient extends EventEmitter {
       const pending = this.pending.get(msg.id);
       if (!pending) return;
       this.pending.delete(msg.id);
+      clearTimeout(pending.timer);
       if (msg.ok) pending.resolve(msg.payload);
       else pending.reject(new Error(msg.error?.message ?? "gateway request failed"));
       return;
@@ -161,8 +178,8 @@ export class GatewayClient extends EventEmitter {
       id: "connect",
       method: "connect",
       params: {
-        minProtocol: PROTOCOL_VERSION,
-        maxProtocol: PROTOCOL_VERSION,
+        minProtocol: MIN_PROTOCOL_VERSION,
+        maxProtocol: MAX_PROTOCOL_VERSION,
         client: {
           id: CLIENT_ID,
           version: "0.1.0",
@@ -187,11 +204,14 @@ export class GatewayClient extends EventEmitter {
   private handleConnectResult(msg: Record<string, any>) {
     if (!msg.ok) {
       this.emit("status", { connected: false, error: msg.error?.message });
+      this.ws?.close(1008, "connect failed");
       return;
     }
     this.connected = true;
     this.reconnectAttempt = 0;
     this.mainSessionKey = msg.payload?.snapshot?.sessionDefaults?.mainSessionKey ?? null;
+    this.serverVersion = msg.payload?.server?.version ?? null;
+    this.serverUptimeMs = msg.payload?.snapshot?.uptimeMs ?? null;
     this.emit("status", { connected: true });
     this.setupSession().catch(() => {
       // best-effort : sans route de livraison on retombe sur un envoi "interne"
@@ -231,16 +251,67 @@ export class GatewayClient extends EventEmitter {
   }
 
   private rejectAllPending(err: Error) {
-    for (const p of this.pending.values()) p.reject(err);
+    for (const p of this.pending.values()) {
+      clearTimeout(p.timer);
+      p.reject(err);
+    }
     this.pending.clear();
   }
 
-  private request<T = unknown>(method: string, params: unknown): Promise<T> {
+  private request<T = unknown>(
+    method: string,
+    params: unknown,
+    timeoutMs = REQUEST_TIMEOUT_MS,
+  ): Promise<T> {
     if (!this.connected) return Promise.reject(new Error("gateway not connected"));
     const id = String(this.nextId++);
     return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve: resolve as (v: unknown) => void, reject });
+      const timer = setTimeout(() => {
+        this.pending.delete(id);
+        reject(new Error(`gateway request timed out: ${method}`));
+      }, timeoutMs);
+      this.pending.set(id, {
+        resolve: resolve as (v: unknown) => void,
+        reject,
+        timer,
+      });
       this.send({ type: "req", id, method, params });
+    });
+  }
+
+  get version(): string | null {
+    return this.serverVersion;
+  }
+
+  get uptimeMs(): number | null {
+    return this.serverUptimeMs;
+  }
+
+  getHealthSnapshot(): Promise<unknown> {
+    return this.request("health", { probe: false }, 8_000);
+  }
+
+  getStatusSummary(): Promise<unknown> {
+    return this.request("status", { includeChannelSummary: true }, 8_000);
+  }
+
+  getWhatsAppStatus(): Promise<unknown> {
+    return this.request(
+      "channels.status",
+      { channel: "whatsapp", probe: false, timeoutMs: 3_000 },
+      8_000,
+    );
+  }
+
+  getConfiguredModels(): Promise<unknown> {
+    return this.request("models.list", { view: "configured" }, 8_000);
+  }
+
+  getLogs(cursor?: number): Promise<GatewayLogTailResult> {
+    return this.request("logs.tail", {
+      ...(cursor !== undefined ? { cursor } : {}),
+      limit: 200,
+      maxBytes: 100_000,
     });
   }
 

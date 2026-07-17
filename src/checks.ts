@@ -15,10 +15,10 @@ async function timedFetch(
   return { res, latencyMs: performance.now() - start };
 }
 
-/** Vérifie que la gateway OpenClaw répond (peu importe le status exact tant que le serveur répond). */
+/** Vérifie le endpoint de liveness HTTP dédié de la gateway OpenClaw. */
 export async function checkGateway(url: string): Promise<HttpCheckResult> {
   try {
-    const { res, latencyMs } = await timedFetch(url);
+    const { res, latencyMs } = await timedFetch(new URL("/health", url).toString());
     return { ok: res.ok, latencyMs: Math.round(latencyMs) };
   } catch (err) {
     return { ok: false, latencyMs: null, error: (err as Error).message };
@@ -28,6 +28,10 @@ export async function checkGateway(url: string): Promise<HttpCheckResult> {
 export interface OllamaCheckResult extends HttpCheckResult {
   models?: string[];
   fallbackModelReady?: boolean;
+}
+
+export function isOllamaModelReady(models: string[], fallbackModel: string): boolean {
+  return models.some((model) => model === fallbackModel);
 }
 
 /** Vérifie Ollama via /api/tags et si le modèle de fallback est bien chargé localement. */
@@ -48,14 +52,11 @@ export async function checkOllama(
     }
     const data = (await res.json()) as { models?: { name: string }[] };
     const models = (data.models ?? []).map((m) => m.name);
-    const fallbackBase = fallbackModel.split(":")[0];
     return {
       ok: true,
       latencyMs: Math.round(latencyMs),
       models,
-      fallbackModelReady: models.some(
-        (m) => m === fallbackModel || m.startsWith(`${fallbackBase}:`),
-      ),
+      fallbackModelReady: isOllamaModelReady(models, fallbackModel),
     };
   } catch (err) {
     return { ok: false, latencyMs: null, error: (err as Error).message };

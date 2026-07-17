@@ -43,6 +43,10 @@ export function pruneOldPings() {
   db.run("DELETE FROM pings WHERE ts < ?", [Date.now() - RETENTION_MS]);
 }
 
+export function closeDatabase() {
+  db.close();
+}
+
 export interface PingRow {
   ts: number;
   ok: number;

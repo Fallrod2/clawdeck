@@ -1,8 +1,7 @@
 // src/components/LatencyChart.tsx — graphe de latence (Cloudflare / passerelle
-// Orange). Un seul axe (ms), 2 séries catégorielles, hover crosshair + tooltip,
-// légende toujours présente pour ≥2 séries (voir skill dataviz).
+// Orange). Un seul axe (ms), deux séries et une lecture détaillée au survol.
 
-import { useMemo, useRef, useState, type PointerEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type PointerEvent } from "react";
 import type { PingHistory, PingRow } from "../lib/types";
 
 interface Series {
@@ -14,18 +13,29 @@ interface Series {
 
 // Slots catégoriels 1 et 2 de la palette validée (variante sombre).
 const SERIES_STYLE: Record<Series["key"], { label: string; color: string }> = {
-  cloudflare: { label: "Cloudflare (1.1.1.1)", color: "#3987e5" },
-  orange: { label: "Passerelle Orange", color: "#199e70" },
+  cloudflare: { label: "Internet · 1.1.1.1", color: "var(--chart-internet)" },
+  orange: { label: "Passerelle locale", color: "var(--chart-local)" },
 };
 
-const WIDTH = 800;
-const HEIGHT = 240;
-const PAD = { top: 12, right: 12, bottom: 24, left: 40 };
-const HOVER_TOLERANCE_MS = 20 * 60_000; // 20 min : au-delà, on n'affiche pas de valeur
+const DEFAULT_WIDTH = 800;
+const HEIGHT = 260;
+const PAD = { top: 18, right: 12, bottom: 34, left: 42 };
 
 export function LatencyChart({ history }: { history: PingHistory | null }) {
+  const containerRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
   const [hoverTs, setHoverTs] = useState<number | null>(null);
+  const [width, setWidth] = useState(DEFAULT_WIDTH);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    const observer = new ResizeObserver(([entry]) => {
+      if (entry) setWidth(Math.max(280, Math.round(entry.contentRect.width)));
+    });
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, []);
 
   const series: Series[] = useMemo(
     () => [
@@ -36,9 +46,10 @@ export function LatencyChart({ history }: { history: PingHistory | null }) {
   );
 
   const allPoints = useMemo(() => series.flatMap((s) => s.points), [series]);
+  const hoverToleranceMs = Math.max((history?.bucketMs ?? 5_000) * 1.5, 15_000);
 
   const scales = useMemo(() => {
-    const innerW = WIDTH - PAD.left - PAD.right;
+    const innerW = width - PAD.left - PAD.right;
     const innerH = HEIGHT - PAD.top - PAD.bottom;
     if (allPoints.length === 0) return null;
 
@@ -56,7 +67,7 @@ export function LatencyChart({ history }: { history: PingHistory | null }) {
     const yTicks = Array.from({ length: tickCount + 1 }, (_, i) => Math.round((maxY / tickCount) * i));
 
     return { xScale, yScale, yTicks, minTs, maxTs };
-  }, [allPoints]);
+  }, [allPoints, width]);
 
   function pathFor(s: Series) {
     if (!scales) return "";
@@ -85,7 +96,7 @@ export function LatencyChart({ history }: { history: PingHistory | null }) {
         best = p;
       }
     }
-    return best && bestDiff <= HOVER_TOLERANCE_MS ? best : null;
+    return best && bestDiff <= hoverToleranceMs ? best : null;
   }
 
   function handleMove(e: PointerEvent<SVGSVGElement>) {
@@ -108,44 +119,72 @@ export function LatencyChart({ history }: { history: PingHistory | null }) {
 
   if (!scales) {
     return (
-      <div className="flex h-60 items-center justify-center text-sm text-neutral-500">
-        Pas encore de données de ping.
+      <div className="flex h-64 flex-col items-center justify-center text-center">
+        <span className="font-mono text-xl text-[var(--text-muted)]" aria-hidden>—</span>
+        <p className="mt-2 text-sm text-[var(--text-secondary)]">Pas encore de données réseau</p>
+        <p className="mt-1 text-xs text-[var(--text-muted)]">Le premier relevé apparaîtra après une sonde réussie.</p>
       </div>
     );
   }
 
   const hoverX = hoverTs != null ? scales.xScale(hoverTs) : null;
+  const xTicks = [
+    { ts: scales.minTs, anchor: "start" as const },
+    { ts: scales.minTs + (scales.maxTs - scales.minTs) / 2, anchor: "middle" as const },
+    { ts: scales.maxTs, anchor: "end" as const },
+  ];
 
   return (
-    <div className="relative">
+    <div ref={containerRef} className="relative">
       <svg
         ref={svgRef}
-        viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
-        className="h-auto w-full touch-none"
+        viewBox={`0 0 ${width} ${HEIGHT}`}
+        className="h-64 w-full touch-none"
         onPointerMove={handleMove}
         onPointerLeave={() => setHoverTs(null)}
+        role="img"
+        aria-labelledby="latency-chart-title latency-chart-description"
       >
+        <title id="latency-chart-title">Latence Internet et réseau local</title>
+        <desc id="latency-chart-description">Évolution de la latence en millisecondes sur la période sélectionnée.</desc>
         {scales.yTicks.map((t) => (
           <g key={t}>
             <line
               x1={PAD.left}
-              x2={WIDTH - PAD.right}
+              x2={width - PAD.right}
               y1={scales.yScale(t)}
               y2={scales.yScale(t)}
-              stroke="#2c2c2a"
+              stroke="rgba(255,255,255,0.07)"
               strokeWidth={1}
             />
             <text
               x={PAD.left - 8}
               y={scales.yScale(t)}
               fontSize={11}
-              fill="#898781"
+              fill="var(--text-muted)"
               textAnchor="end"
               dominantBaseline="middle"
             >
               {t}
             </text>
           </g>
+        ))}
+
+        {xTicks.map((tick) => (
+          <text
+            key={`${tick.ts}-${tick.anchor}`}
+            x={scales.xScale(tick.ts)}
+            y={HEIGHT - 8}
+            fontSize={10}
+            fill="var(--text-muted)"
+            textAnchor={tick.anchor}
+          >
+            {new Date(tick.ts).toLocaleString("fr-FR", {
+              day: "2-digit",
+              month: "2-digit",
+              ...(history && history.bucketMs < 10 * 60_000 ? { hour: "2-digit", minute: "2-digit" } : {}),
+            })}
+          </text>
         ))}
 
         {series.map((s) => (
@@ -162,7 +201,7 @@ export function LatencyChart({ history }: { history: PingHistory | null }) {
 
         {hoverX != null && (
           <g>
-            <line x1={hoverX} x2={hoverX} y1={PAD.top} y2={HEIGHT - PAD.bottom} stroke="#383835" strokeWidth={1} />
+            <line x1={hoverX} x2={hoverX} y1={PAD.top} y2={HEIGHT - PAD.bottom} stroke="rgba(255,255,255,0.18)" strokeWidth={1} />
             {series.map((s) => {
               const p = hoverTs != null ? closest(s, hoverTs) : null;
               if (!p || p.latencyMs == null) return null;
@@ -173,7 +212,7 @@ export function LatencyChart({ history }: { history: PingHistory | null }) {
                   cy={scales.yScale(p.latencyMs)}
                   r={4}
                   fill={s.color}
-                  stroke="#1a1a19"
+                  stroke="var(--surface-panel)"
                   strokeWidth={2}
                 />
               );
@@ -184,18 +223,18 @@ export function LatencyChart({ history }: { history: PingHistory | null }) {
 
       {hoverTs != null && hoverX != null && (
         <div
-          className="pointer-events-none absolute top-2 w-40 rounded-md border border-white/10 bg-neutral-900 px-3 py-2 text-xs shadow-lg"
-          style={{ left: `min(${(hoverX / WIDTH) * 100}%, calc(100% - 168px))` }}
+          className="pointer-events-none absolute top-2 w-44 rounded-lg border border-white/10 bg-[var(--surface-raised)] px-3 py-2.5 text-xs shadow-xl"
+          style={{ left: `min(${(hoverX / width) * 100}%, calc(100% - 184px))` }}
         >
-          <div className="mb-1 text-neutral-400">
+          <div className="mb-2 border-b border-white/7 pb-2 font-mono text-[10px] text-[var(--text-muted)]">
             {new Date(hoverTs).toLocaleString("fr-FR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}
           </div>
           {series.map((s) => {
             const p = closest(s, hoverTs);
             return (
-              <div key={s.key} className="flex items-center gap-2 text-neutral-100">
+              <div key={s.key} className="mt-1.5 flex items-center gap-2 text-[var(--text-primary)]">
                 <span className="inline-block h-2 w-2 shrink-0 rounded-full" style={{ background: s.color }} />
-                <span className="truncate text-neutral-400">{s.label}</span>
+                <span className="truncate text-[var(--text-secondary)]">{s.label}</span>
                 <span className="ml-auto font-medium tabular-nums">
                   {p?.latencyMs != null ? `${Math.round(p.latencyMs)} ms` : p && !p.ok ? "×" : "—"}
                 </span>
@@ -205,7 +244,7 @@ export function LatencyChart({ history }: { history: PingHistory | null }) {
         </div>
       )}
 
-      <div className="mt-2 flex gap-4 text-xs text-neutral-400">
+      <div className="mt-3 flex flex-wrap gap-x-5 gap-y-2 border-t border-white/6 pt-3 text-[11px] text-[var(--text-secondary)]">
         {series.map((s) => (
           <div key={s.key} className="flex items-center gap-2">
             <span className="inline-block h-2 w-2 rounded-full" style={{ background: s.color }} />

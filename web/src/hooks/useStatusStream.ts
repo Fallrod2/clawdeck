@@ -5,11 +5,12 @@
 import { useEffect, useRef, useState } from "react";
 import type { StatusPayload } from "../lib/types";
 
-export type ConnectionState = "connecting" | "open" | "error";
+export type ConnectionState = "connecting" | "open" | "unauthorized" | "error";
 
 export function useStatusStream(token: string | null) {
   const [status, setStatus] = useState<StatusPayload | null>(null);
   const [state, setState] = useState<ConnectionState>("connecting");
+  const [rejectedToken, setRejectedToken] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
@@ -17,17 +18,25 @@ export function useStatusStream(token: string | null) {
 
     let cancelled = false;
     let retryTimer: ReturnType<typeof setTimeout>;
+    setRejectedToken(null);
 
     async function connect() {
       const controller = new AbortController();
       abortRef.current = controller;
       setState("connecting");
+      let shouldRetry = true;
 
       try {
         const res = await fetch("/api/status", {
           headers: { Authorization: `Bearer ${token}` },
           signal: controller.signal,
         });
+        if (res.status === 401) {
+          shouldRetry = false;
+          setRejectedToken(token);
+          setState("unauthorized");
+          return;
+        }
         if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
         setState("open");
 
@@ -58,7 +67,7 @@ export function useStatusStream(token: string | null) {
         setState("error");
       }
 
-      if (!cancelled) retryTimer = setTimeout(connect, 3000);
+      if (!cancelled && shouldRetry) retryTimer = setTimeout(connect, 3000);
     }
 
     connect();
@@ -70,5 +79,5 @@ export function useStatusStream(token: string | null) {
     };
   }, [token]);
 
-  return { status, state };
+  return { status, state, rejectedToken };
 }

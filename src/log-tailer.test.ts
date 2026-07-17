@@ -1,0 +1,64 @@
+import { describe, expect, test } from "bun:test";
+import { LogTailer } from "./log-tailer";
+
+async function waitFor(predicate: () => boolean, timeoutMs = 500): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() >= deadline) throw new Error("condition not reached before timeout");
+    await Bun.sleep(5);
+  }
+}
+
+describe("LogTailer", () => {
+  test("shares one cursor across subscribers and pauses without listeners", async () => {
+    const cursors: Array<number | undefined> = [];
+    let nextCursor = 10;
+    const tailer = new LogTailer({
+      async getLogs(cursor) {
+        cursors.push(cursor);
+        nextCursor += 1;
+        return { cursor: nextCursor, size: nextCursor, lines: ["{}"], truncated: false, reset: false };
+      },
+    }, 10);
+    const first: number[] = [];
+    const second: number[] = [];
+    const unsubscribeFirst = tailer.subscribe((event) => {
+      if (event.type === "data") first.push(event.result.cursor);
+    });
+    const unsubscribeSecond = tailer.subscribe((event) => {
+      if (event.type === "data") second.push(event.result.cursor);
+    });
+
+    await waitFor(() => first.length >= 2 && second.length >= 2);
+    unsubscribeFirst();
+    unsubscribeSecond();
+    const readsAfterPause = cursors.length;
+    await Bun.sleep(30);
+    await tailer.stop();
+
+    expect(cursors[0]).toBeUndefined();
+    expect(cursors[1]).toBe(11);
+    expect(cursors.length).toBe(readsAfterPause);
+    expect(first).toEqual(second);
+  });
+
+  test("reports source errors without rejecting the tail loop", async () => {
+    let calls = 0;
+    const events: string[] = [];
+    const tailer = new LogTailer({
+      async getLogs() {
+        calls += 1;
+        if (calls === 1) throw new Error("gateway offline");
+        return { cursor: 1, size: 1, lines: ["{}"], truncated: false, reset: false };
+      },
+    }, 10);
+    const unsubscribe = tailer.subscribe((event) => events.push(event.type));
+
+    await waitFor(() => events.includes("data"));
+    unsubscribe();
+    await tailer.stop();
+
+    expect(events[0]).toBe("error");
+    expect(events).toContain("data");
+  });
+});
