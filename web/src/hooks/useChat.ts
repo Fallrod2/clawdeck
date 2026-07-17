@@ -13,6 +13,11 @@ function localId(): string {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 }
 
+// Fenêtres de réconciliation du miroir de session (handleSessionMessage).
+// Au-delà, un texte identique est un nouveau message légitime, pas un écho.
+const LOCAL_ECHO_WINDOW_MS = 2 * 60_000; // écho de l'envoi optimiste du dashboard
+const ASSISTANT_ECHO_WINDOW_MS = 30_000; // doublon d'une réponse déjà streamée sans runId
+
 function wsUrl(): string {
   const proto = location.protocol === "https:" ? "wss:" : "ws:";
   return `${proto}//${location.host}/api/chat/ws`;
@@ -126,8 +131,11 @@ export function useChat(token: string | null) {
 
   // Miroir live : messages ajoutés à la session côté gateway (WhatsApp entrant
   // depuis le téléphone, réponses initiées ailleurs). Source de vérité du
-  // transcript, avec dédup contre l'écho optimiste (user) et le streaming
-  // (assistant, déjà affiché via les events chat/agent).
+  // transcript. L'écho de l'envoi optimiste (user) est réconcilié avec son
+  // message local-* ; le doublon du streaming (assistant, déjà affiché via
+  // les events chat/agent) est écarté — de façon ciblée seulement, pour ne
+  // jamais supprimer deux vrais messages identiques envoyés à des moments
+  // différents.
   const handleSessionMessage = useCallback((payload: any) => {
     const m = payload?.message ?? payload;
     const role = m?.role;
@@ -142,14 +150,50 @@ export function useChat(token: string | null) {
     setMessages((prev) => {
       if (prev.some((x) => x.id === stableId)) return prev;
       if (runId && prev.some((x) => x.id === `run-${runId}`)) return prev;
-      if (prev.some((x) => x.role === role && x.text.trim() === trimmed)) return prev;
+
+      const now = Date.now();
+
+      if (role === "user") {
+        // Écho de l'envoi optimiste du dashboard : on réconcilie le message
+        // local-* correspondant (le plus récent, même texte, encore dans la
+        // fenêtre) au lieu d'ajouter un doublon. Son id devient le stableId
+        // serveur : il ne pourra plus absorber un autre écho.
+        for (let i = prev.length - 1; i >= 0; i--) {
+          const x = prev[i];
+          if (
+            x.role === "user" &&
+            x.id.startsWith("local-") &&
+            x.text.trim() === trimmed &&
+            now - x.timestamp <= LOCAL_ECHO_WINDOW_MS
+          ) {
+            const next = prev.slice();
+            next[i] = { ...x, id: stableId, timestamp: typeof m.timestamp === "number" ? m.timestamp : x.timestamp };
+            return next;
+          }
+        }
+        // Pas de candidat : message venu d'ailleurs (WhatsApp…), ajout normal.
+      } else if (!runId) {
+        // Assistant sans runId : impossible de le relier à un message run-*.
+        // On n'écarte que le doublon d'une réponse récente (encore en cours
+        // de streaming ou finalisée il y a peu) — jamais contre toute la
+        // conversation, sinon deux réponses identiques espacées seraient
+        // silencieusement perdues.
+        const isStreamEcho = prev.some(
+          (x) =>
+            x.role === "assistant" &&
+            x.text.trim() === trimmed &&
+            (x.pending || now - x.timestamp <= ASSISTANT_ECHO_WINDOW_MS),
+        );
+        if (isStreamEcho) return prev;
+      }
+
       return [
         ...prev,
         {
           id: stableId,
           role,
           text,
-          timestamp: typeof m.timestamp === "number" ? m.timestamp : Date.now(),
+          timestamp: typeof m.timestamp === "number" ? m.timestamp : now,
           pending: false,
           toolCalls: [],
         },

@@ -13,6 +13,10 @@ export default defineConfig({
       '/api': {
         target: 'http://127.0.0.1:3001',
         changeOrigin: true,
+        // Le chat passe par un WebSocket (/api/chat/ws) : il doit être
+        // relayé comme le reste de /api, sinon il n'atteint jamais le
+        // backend en dev.
+        ws: true,
       },
     },
   },
