@@ -38,11 +38,11 @@ Contraintes permanentes :
 - [ ] Phase 2 robuste : le chat fonctionne, mais son protocole, sa reconnexion,
   ses accusés d'envoi et sa déduplication restent fragiles.
 - [ ] Phase 3 : aucune notification dashboard/ntfy n'est implémentée.
-- [ ] Qualité : 16 tests unitaires ciblés existent (network, collecteurs, logs,
-  openclaw-status) mais rien sur env, db, routes HTTP/WS ni gateway/client, et
-  aucune CI.
-- [ ] Le chat est cassé en mode dev : le proxy Vite ne relaie pas les
-  WebSockets (voir P0).
+- [ ] Qualité : 45 tests unitaires (env, validation, network, collecteurs,
+  logs, log-tailer, watchdog gateway, openclaw-status) ; il manque encore db,
+  les routes HTTP/WS de bout en bout, et toute CI.
+- [x] Le chat cassé en mode dev (proxy Vite sans WebSocket) : corrigé le
+  2026-07-17 (`ws: true`).
 
 ## P0 — Fiabiliser les fondations
 
@@ -60,41 +60,49 @@ chat ne sont pas fiables tant qu'elles ne sont pas terminées.
 - [x] Borner le ping ICMP macOS avec `-t` (durée globale sur la version actuelle),
   `-W` (attente de réponse) et un watchdog Bun qui tue/récolte le sous-processus
   en cas de dépassement ; tester succès, sortie non nulle et processus muet.
-- [ ] Durcir et centraliser la validation de configuration au démarrage.
-  - Valider `PORT`, les URL, les délais et les chemins avec des erreurs lisibles
-    (aujourd'hui `PORT=abc` donne `NaN` passé à `Bun.serve`).
-  - Refuser `AUTH_TOKEN=change-me`, les tokens trop courts et les valeurs vides.
-  - Autoriser `BIND_HOST` uniquement pour loopback ou les plages Tailscale
-    attendues : le garde actuel ne refuse que `0.0.0.0` et laisse passer `::`
-    (wildcard IPv6, équivalent exact) ou une IP LAN.
+- [x] Durcir et centraliser la validation de configuration au démarrage
+  (fait le 2026-07-17 : `parseEnv` pur et testé dans `src/env.ts`).
+  - [x] `PORT` entier 1-65535, URL http(s) obligatoires, chemins non vides,
+    erreurs françaises lisibles sans jamais citer un secret.
+  - [x] `AUTH_TOKEN` : refuse `change-me` et moins de 16 caractères.
+  - [x] `BIND_HOST` : allowlist stricte loopback (127.0.0.0/8, localhost, ::1)
+    + Tailscale (100.64.0.0/10, fd7a:115c:a1e0::/48) ; `0.0.0.0`, `::` et les
+    IP LAN sont refusés (`isAllowedBindHost`, testé aux bords de plage).
   - [x] Utiliser `/health` pour la sonde HTTP OpenClaw (fait, `checks.ts:21`).
-  - Centraliser la comparaison de tokens en constant-time
-    (`crypto.timingSafeEqual`) pour l'API, le WS chat et le futur `/notify`.
-- [ ] Corriger le proxy Vite : ajouter `ws: true` à l'entrée `/api` de
-  `web/vite.config.ts` — sans quoi `/api/chat/ws` n'atteint jamais le backend
-  en dev (une ligne, prod non affectée).
-- [ ] Mettre le log-tailer en pause quand la gateway est déconnectée : le poll
-  actuel (2 s) émet une erreur « gateway not connected » toutes les 2 s vers
-  tous les clients SSE logs ; reprendre sur l'événement `status`.
-- [ ] Protéger `getHistory().then(...)` (`index.ts:248`) par un `.catch` et un
-  garde `readyState` avant `ws.send`.
+  - [x] Comparaison de tokens constant-time centralisée (`safeTokenEqual` dans
+    `src/validate.ts`), utilisée par l'API et le WS chat — à réutiliser pour
+    le futur `/notify`.
+- [x] Corriger le proxy Vite (`ws: true`) — fait le 2026-07-17, chat dev
+  fonctionnel.
+- [x] Log-tailer silencieux quand la gateway est déconnectée (fait le
+  2026-07-17 : `LogTailSource.isConnected`, aucun événement d'erreur, reprise
+  automatique au tick suivant la reconnexion ; testé).
+- [x] `getHistory().then(...)` protégé par `.catch` + garde sur l'état vivant
+  du socket (`ws.raw`) — fait le 2026-07-17. Au passage, correction d'une
+  fuite préexistante : l'adaptateur Bun de Hono recrée un `WSContext` par
+  événement, donc `chatClients.delete(ws)` en `onClose` ne retirait jamais
+  l'instance ajoutée à l'auth (un contexte fuité par connexion, broadcast
+  vers des sockets morts).
 - [x] Corriger la détection du modèle Ollama : un autre tag du même modèle ne
   doit pas faire croire que le tag de fallback configuré est disponible.
-- [ ] Valider toutes les entrées HTTP/WS : `hours` fini et borné (confirmé :
-  `?hours=abc` propage `NaN` jusqu'à la requête SQLite au lieu d'un 400),
-  texte de chat avec taille maximale (aucune borne aujourd'hui), formes de
-  messages explicites et erreurs stables.
+- [x] Valider les entrées HTTP/WS (fait le 2026-07-17) : `hours` fini, borné
+  et clampé via `parseHours` (`?hours=abc` → 400 `{"error":"invalid hours"}`,
+  vérifié en réel), texte de chat borné à `MAX_CHAT_TEXT_LENGTH` (8 000
+  caractères) avec erreur explicite au client. Le typage strict des formes de
+  messages reste couvert par l'item P2 « types des frames ».
 - [ ] Stabiliser le client gateway selon le protocole OpenClaw installé.
-  - Ajouter un watchdog de handshake : si le socket s'ouvre mais que
-    `connect.challenge`/`connect-ok` n'arrive jamais, le client reste
-    aujourd'hui bloqué indéfiniment (ni connecté, ni en reconnexion) —
-    fermer le socket après un délai borné.
+  - [x] Watchdog de handshake (fait le 2026-07-17) : socket fermé après
+    `HANDSHAKE_TIMEOUT_MS` (10 s) sans `connect-ok`, retour au chemin normal
+    onclose → reconnexion ; timer lié à son socket ; testé via `socketFactory`
+    injectable (`src/gateway/client.test.ts`).
+  - [x] Jitter sur le backoff de reconnexion (facteur 0,5-1,0, fait le
+    2026-07-17).
   - Négocier la plage de protocoles supportée (actuellement v3-v4) au lieu de
     forcer v4, puis vérifier le protocole réellement négocié.
   - Exploiter `hello-ok.features` avant d'appeler une méthode optionnelle et
     respecter les limites annoncées dans `hello-ok.policy`.
-  - [x] Timeout par RPC (fait, `client.ts:261-280`) ; reste : traiter `connect`
-    refusé, `UNAVAILABLE`, `retryAfterMs` et ajouter du jitter au backoff.
+  - [x] Timeout par RPC (fait, `client.ts`) ; reste : traiter `connect`
+    refusé, `UNAVAILABLE` et `retryAfterMs`.
   - [x] Remise à zéro de la route de livraison à la déconnexion (fait,
     `client.ts:104-110`) ; reste : désabonnement propre à l'arrêt.
   - Suivre `seq`; en cas de trou, recharger `health`, les sessions et
@@ -155,11 +163,12 @@ chat ne sont pas fiables tant qu'elles ne sont pas terminées.
 - [ ] Définir des types minimaux pour les frames gateway utilisées et supprimer
   les `any` aux frontières du backend et du hook React.
 - [ ] Fiabiliser l'identité et l'ordre des messages.
-  - Utiliser les identifiants stables de la gateway ; ne plus dédupliquer deux
-    vrais messages uniquement parce que leur rôle et leur texte sont identiques
-    (confirmé réel, `useChat.ts:145` : renvoyer deux fois « ok » depuis
-    WhatsApp supprime silencieusement le second du miroir — ne dédupliquer
-    l'écho que contre les messages `local-*` récents non réconciliés).
+  - [x] Ne plus dédupliquer deux vrais messages par simple égalité rôle+texte
+    (fait le 2026-07-17) : l'écho optimiste est réconcilié avec son message
+    `local-*` récent (l'id devient le `stableId` serveur), et un assistant
+    sans `runId` n'est comparé qu'aux réponses en streaming ou finalisées
+    depuis moins de 30 s. Deux « ok » espacés apparaissent désormais tous
+    les deux.
   - Réconcilier l'écho optimiste, l'accusé `chat.send`, le streaming, le miroir
     `session.message` et l'historique après reconnexion.
   - Recharger/réconcilier l'historique même si l'UI contient déjà des messages.
