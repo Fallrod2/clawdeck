@@ -8,6 +8,9 @@ import { ChatPanel } from "./components/ChatPanel";
 import { LogsPanel } from "./components/LogsPanel";
 import { useStatusStream } from "./hooks/useStatusStream";
 import { usePingHistory } from "./hooks/usePingHistory";
+import { useChat } from "./hooks/useChat";
+import { useNow, STALE_AFTER_MS } from "./hooks/useNow";
+import { FreshnessBadge } from "./components/FreshnessBadge";
 import { getToken, setToken as saveToken, clearToken } from "./lib/token";
 
 const RANGES = [
@@ -25,15 +28,6 @@ type TabId = (typeof TABS)[number]["id"];
 function toneForCheck(check: { ok: boolean } | null | undefined): Tone {
   if (!check) return "unknown";
   return check.ok ? "good" : "critical";
-}
-
-function formatUpdateTime(timestamp?: number) {
-  if (!timestamp) return "En attente du premier relevé";
-  return `Mis à jour à ${new Date(timestamp).toLocaleTimeString("fr-FR", {
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  })}`;
 }
 
 function formatActivity(timestamp: number | null | undefined): string {
@@ -60,17 +54,36 @@ export default function App() {
   const [tab, setTab] = useState<TabId>("health");
 
   const { status, state, rejectedToken } = useStatusStream(token);
-  const { history } = usePingHistory(token, rangeHours);
+  const { history, lastUpdatedAt } = usePingHistory(token, rangeHours);
+  // Fraîcheur : un snapshot plus vieux que STALE_AFTER_MS dégrade les cartes
+  // et la bannière globale — jamais de vert plein sur des données mortes
+  // (UI_UX §4). Un seul badge d'âge, dans l'en-tête, pour rester calme.
+  const now = useNow();
+  const dataStale = status != null && now - status.timestamp > STALE_AFTER_MS;
+  // Le chat vit au niveau App : sa connexion WS et son transcript survivent
+  // au changement d'onglet (le panneau est masqué, jamais démonté).
+  const chat = useChat(token);
 
   useEffect(() => {
-    if (state !== "unauthorized" || !token || rejectedToken !== token) return;
+    // Même garde que le flux SSE : on ne purge le token stocké que si c'est
+    // bien LUI qui a été refusé (SSE 401 ou fermeture WS 1008 du chat), pas
+    // un état périmé d'un token précédent.
+    const sseRejected = state === "unauthorized" && rejectedToken === token;
+    const chatRejected = chat.wsState === "unauthorized" && chat.rejectedToken === token;
+    if (!token || (!sseRejected && !chatRejected)) return;
     clearToken();
     setTokenState(null);
     setTokenError("Ce token n'est pas reconnu. Vérifie AUTH_TOKEN puis réessaie.");
-  }, [state, rejectedToken, token]);
+  }, [state, rejectedToken, chat.wsState, chat.rejectedToken, token]);
 
   const overall = useMemo(() => {
     if (!status) return { tone: "unknown" as Tone, label: "Initialisation des sondes" };
+    if (dataStale) {
+      return {
+        tone: "unknown" as Tone,
+        label: "Données périmées — l'état affiché date de la dernière mesure reçue",
+      };
+    }
     const checks = [status.gateway.ok, status.ollama.ok, status.ping.cloudflare.ok, status.ping.orange.ok];
     if (status.openclaw) checks.push(status.openclaw.connected && status.openclaw.healthy !== false);
     if (status.openclaw?.whatsapp.healthy !== null && status.openclaw?.whatsapp.healthy !== undefined) {
@@ -86,7 +99,7 @@ export default function App() {
     if (failures === 0) return { tone: "good" as Tone, label: "Tous les systèmes sondés répondent" };
     if (failures === 1) return { tone: "warning" as Tone, label: "Un système demande votre attention" };
     return { tone: "critical" as Tone, label: `${failures} systèmes sont indisponibles` };
-  }, [status]);
+  }, [status, dataStale]);
 
   if (!token) {
     return (
@@ -214,7 +227,7 @@ export default function App() {
       </header>
 
       <main className="mx-auto max-w-6xl px-4 py-7 sm:px-6 sm:py-10">
-        {tab === "health" ? (
+        {tab === "health" && (
           <>
             <section className="mb-6 flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
               <div>
@@ -226,9 +239,7 @@ export default function App() {
                   État d'OpenClaw, du fallback local et de la liaison réseau du Mac mini.
                 </p>
               </div>
-              <p className="font-mono text-[11px] text-[var(--text-muted)]">
-                {formatUpdateTime(status?.timestamp)}
-              </p>
+              <FreshnessBadge timestamp={status?.timestamp ?? null} />
             </section>
 
             <section
@@ -260,6 +271,7 @@ export default function App() {
               <StatusCard
                 title="Gateway OpenClaw"
                 code="GW"
+                staleTone={dataStale}
                 tone={!status?.gateway
                   ? "unknown"
                   : !status.gateway.ok || openclaw?.connected === false || openclaw?.healthy === false
@@ -274,6 +286,7 @@ export default function App() {
               <StatusCard
                 title="Provider actif"
                 code="LLM"
+                staleTone={dataStale}
                 tone={providerTone}
                 detail={openclaw?.model ? `${openclaw.provider ?? "provider"}/${openclaw.model}` : openclaw?.error || "En attente de la session"}
                 metricLabel={openclaw?.usingFallback ? "Mode" : "Provider"}
@@ -282,6 +295,7 @@ export default function App() {
               <StatusCard
                 title="WhatsApp"
                 code="WA"
+                staleTone={dataStale}
                 tone={whatsappTone}
                 detail={openclaw?.whatsapp.lastError || (openclaw?.whatsapp.connected ? "Compte lié et connecté" : "Canal non connecté")}
                 metricLabel="Activité"
@@ -290,6 +304,7 @@ export default function App() {
               <StatusCard
                 title="Ollama"
                 code="AI"
+                staleTone={dataStale}
                 tone={ollamaTone}
                 latencyMs={ollama?.latencyMs}
                 detail={ollamaDetail}
@@ -297,6 +312,7 @@ export default function App() {
               <StatusCard
                 title="Internet"
                 code="WAN"
+                staleTone={dataStale}
                 tone={toneForCheck(status?.ping.cloudflare)}
                 latencyMs={status?.ping.cloudflare.latencyMs}
                 detail={status?.ping.cloudflare.host || "Cloudflare 1.1.1.1"}
@@ -304,6 +320,7 @@ export default function App() {
               <StatusCard
                 title="Passerelle locale"
                 code="LAN"
+                staleTone={dataStale}
                 tone={toneForCheck(status?.ping.orange)}
                 latencyMs={status?.ping.orange.latencyMs}
                 detail={status?.ping.orange.host || "Réseau local"}
@@ -336,37 +353,39 @@ export default function App() {
                 </div>
               </div>
               <div className="p-4 sm:p-5">
-                <LatencyChart history={history} />
+                <LatencyChart history={history} lastUpdatedAt={lastUpdatedAt} />
               </div>
             </section>
           </>
-        ) : tab === "chat" ? (
-          <>
-            <section className="mb-6">
-              <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-emerald-300/80">
-                Session principale
-              </p>
-              <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">Chat OpenClaw</h1>
-              <p className="mt-2 max-w-xl text-sm leading-6 text-[var(--text-secondary)]">
-                Conversation en direct avec l'agent et visibilité sur ses appels d'outils.
-              </p>
-            </section>
-            <ChatPanel token={token} />
-          </>
-        ) : (
-          <>
-            <section className="mb-6">
-              <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-emerald-300/80">
-                Diagnostic temps réel
-              </p>
-              <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">Logs OpenClaw</h1>
-              <p className="mt-2 max-w-xl text-sm leading-6 text-[var(--text-secondary)]">
-                Événements récents de la gateway, filtrés à la source et conservés uniquement dans cette vue.
-              </p>
-            </section>
-            <LogsPanel token={token} />
-          </>
         )}
+        {/* Chat et logs restent montés en permanence : la connexion WS du
+            chat, le streaming et l'état des logs survivent au changement
+            d'onglet. Le panneau inactif est masqué (hidden) et sorti du
+            clavier comme de l'arbre d'accessibilité (inert + aria-hidden). */}
+        <div hidden={tab !== "chat"} inert={tab !== "chat"} aria-hidden={tab !== "chat"}>
+          <section className="mb-6">
+            <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-emerald-300/80">
+              Session principale
+            </p>
+            <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">Chat OpenClaw</h1>
+            <p className="mt-2 max-w-xl text-sm leading-6 text-[var(--text-secondary)]">
+              Conversation en direct avec l'agent et visibilité sur ses appels d'outils.
+            </p>
+          </section>
+          <ChatPanel chat={chat} active={tab === "chat"} />
+        </div>
+        <div hidden={tab !== "logs"} inert={tab !== "logs"} aria-hidden={tab !== "logs"}>
+          <section className="mb-6">
+            <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-emerald-300/80">
+              Diagnostic temps réel
+            </p>
+            <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">Logs OpenClaw</h1>
+            <p className="mt-2 max-w-xl text-sm leading-6 text-[var(--text-secondary)]">
+              Événements récents de la gateway, filtrés à la source et conservés uniquement dans cette vue.
+            </p>
+          </section>
+          <LogsPanel token={token} />
+        </div>
       </main>
     </div>
   );

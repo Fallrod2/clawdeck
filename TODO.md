@@ -35,8 +35,11 @@ Contraintes permanentes :
 - [x] Socle UI/UX cohérent et règles durables dans `docs/UI_UX.md`.
 - [x] Phase 1 complète : provider actif, état WhatsApp et tail des logs exposés
   sans nouvelle persistance.
-- [ ] Phase 2 robuste : le chat fonctionne, mais son protocole, sa reconnexion,
-  ses accusés d'envoi et sa déduplication restent fragiles.
+- [x] Phase 2 robuste (2026-07-18) : accusés d'envoi avec retry, interruption
+  de run, fermeture 1008 traitée en auth, réconciliation d'écho ciblée, types
+  aux frontières, état conservé entre onglets, mémoire bornée. Reste ouvert :
+  réconciliation de l'historique après reconnexion quand l'UI a déjà des
+  messages, et test d'intégration WhatsApp reproductible.
 - [ ] Phase 3 : aucune notification dashboard/ntfy n'est implémentée.
 - [ ] Qualité : 45 tests unitaires (env, validation, network, collecteurs,
   logs, log-tailer, watchdog gateway, openclaw-status) ; il manque encore db,
@@ -145,40 +148,41 @@ chat ne sont pas fiables tant qu'elles ne sont pas terminées.
     SQLite et aucun tail direct d'un chemin fourni par la requête.
   - Respecter la redaction OpenClaw, ajouter une limite de taille et gérer un
     client lent sans accumuler une file illimitée.
-- [ ] Améliorer le moniteur réseau.
-  - Montrer disponibilité, pertes et périodes sans données en plus de la
-    latence : p50/p95 et % d'échec par série sous le graphe (les buckets
-    `ok=0` existent déjà côté SQL).
-  - Casser le tracé quand deux points sont séparés de plus de ~1,5 × bucket :
-    aujourd'hui `LatencyChart` relie artificiellement les points qui encadrent
-    une période où clawdeck était éteint.
-  - Corriger la race de `usePingHistory` au changement de période (abort de la
-    requête en vol dans le cleanup, sinon 24 h peut écraser 7 j).
-  - Rendre la tolérance du tooltip dépendante de la taille réelle des buckets
-    et rendre les valeurs accessibles au clavier avec une synthèse textuelle.
+- [ ] Améliorer le moniteur réseau (largement fait le 2026-07-18).
+  - [x] Stats de période par série sous le graphe : p50/p95 (nearest-rank),
+    % de buckets en échec (« <1 % » plutôt qu'un 0 mensonger), nombre de
+    trous de collecte.
+  - [x] Tracé cassé sur les trous (> 1,5 × bucket) — un point isolé reste
+    visible ; `<desc>` SVG dynamique.
+  - [x] Race de `usePingHistory` fermée (AbortController, réponse obsolète
+    jamais appliquée) + arrêt sur 401 + `lastUpdatedAt` exposé.
+  - [x] Tooltip : tolérance proportionnelle au bucket (0,75 ×), navigation
+    clavier ←/→/Échap, échec écrit en toutes lettres.
+  - [x] Indicateur « données périmées » du graphe (> 2 × le cycle de 30 s).
   - Distinguer une panne Internet d'une panne de passerelle locale.
   - Invalider le cache de `detectDefaultGateway` (TTL ou échecs répétés) : une
     bascule de route par défaut fige les pings « orange » sur l'ancienne IP.
-  - Exposer l'âge du dernier échantillon pour ne jamais afficher une ancienne
-    valeur comme si elle était fraîche.
 - [x] Retourner une erreur d'auth claire dans `TokenGate` et arrêter la boucle de
   reconnexion sur 401 jusqu'à la saisie d'un nouveau token.
-- [ ] Ajouter `/api/healthz` minimal pour clawdeck (sans secret ni détails) et un
-  état « données périmées » dans l'interface : badge d'âge (« il y a 12 s »)
-  recalculé chaque seconde sur les cartes, tones dégradés au-delà d'un seuil —
-  aujourd'hui un SSE figé laisse les cartes vertes avec une heure de mise à
-  jour jamais recalculée.
-- [ ] Donner un backoff exponentiel plafonné aux trois reconnexions front
-  (`useChat`, `useStatusStream`, `useLogStream` : retry fixe 3 s à l'infini)
-  et relancer sur `online`/`visibilitychange`.
-- [ ] Arrêter proprement `useLogStream` et `usePingHistory` sur 401 (comme le
-  fait déjà `useStatusStream`) au lieu d'afficher « HTTP 401 » brut ou
-  d'ignorer l'erreur en silence.
+- [ ] Ajouter `/api/healthz` minimal pour clawdeck (sans secret ni détails).
+- [x] État « données périmées » dans l'interface (fait le 2026-07-18) : badge
+  d'âge unique dans l'en-tête (`FreshnessBadge` + `useNow`, en pause onglet
+  caché), tons des six cartes atténués + aria « donnée périmée » au-delà de
+  15 s, bannière globale qui ne reste jamais verte sur un SSE figé.
+- [x] Backoff exponentiel plafonné (1 s → 30 s, reset à la première frame) sur
+  les trois reconnexions front + relance immédiate sur `online` /
+  `visibilitychange`, avec garde anti-double-connexion (fait le 2026-07-18).
+- [x] 401 propre partout : `useLogStream` expose un état `auth` calme
+  (« Authentification requise »), `usePingHistory` coupe son cycle ; plus de
+  « HTTP 401 » brut ni d'erreur avalée (fait le 2026-07-18).
 
 ## P2 — Achever le chat riche
 
-- [ ] Définir des types minimaux pour les frames gateway utilisées et supprimer
-  les `any` aux frontières du backend et du hook React.
+- [x] Types aux frontières (fait le 2026-07-18) : union discriminée
+  `ServerFrame` + `parseServerFrame` côté front (frames malformées/inconnues
+  ignorées), narrowing `unknown` côté backend — plus aucun `any` aux
+  frontières du relais chat. Les payloads gateway internes restent `unknown`
+  réduits par narrowing, par choix (forme non garantie stable).
 - [ ] Fiabiliser l'identité et l'ordre des messages.
   - [x] Ne plus dédupliquer deux vrais messages par simple égalité rôle+texte
     (fait le 2026-07-17) : l'écho optimiste est réconcilié avec son message
@@ -189,22 +193,26 @@ chat ne sont pas fiables tant qu'elles ne sont pas terminées.
   - Réconcilier l'écho optimiste, l'accusé `chat.send`, le streaming, le miroir
     `session.message` et l'historique après reconnexion.
   - Recharger/réconcilier l'historique même si l'UI contient déjà des messages.
-- [ ] Ajouter un `clientMessageId` et une réponse succès/erreur du backend ;
-  marquer visiblement un message non envoyé et permettre de le retenter.
+- [x] `clientMessageId` + accusés `send-ok`/`send-error` du backend, états
+  visibles « envoi en cours »/« échec » + bouton « Réessayer » (nouveau
+  clientMessageId, l'ancien ne cible plus rien) ; l'écho de session vaut
+  preuve de livraison et rattrape un échec apparent (fait le 2026-07-18,
+  protocole vérifié en réel ; compatible vieux front/vieux backend).
 - [x] Désactiver l'envoi quand la gateway est déconnectée, pas seulement quand
   la WebSocket vers clawdeck est fermée.
 - [x] Afficher les arguments, mises à jour et résultats d'outils dans des blocs
   repliables, avec état d'erreur et JSON formaté de façon bornée.
-- [ ] Traiter la fermeture WS `1008` (unauthorized / auth timeout) comme une
-  erreur d'auth côté front : `useChat.ts` ignore `ev.code` et re-tente le même
-  token rejeté toutes les 3 s indéfiniment.
-- [ ] Borner l'historique chat en mémoire (cap glissant sur `messages` et
-  purge de `runIdToMessageId`) comme les logs le sont déjà (500).
-- [ ] Conserver l'état du chat au changement d'onglet : le démontage de
-  `ChatPanel` ferme le WS et perd streaming, tool calls et messages
-  optimistes ; remonter `useChat` au niveau App ou masquer sans démonter.
-- [ ] Ajouter l'interruption d'un run via `chat.abort` et afficher clairement les
-  états en attente, interrompu et échoué.
+- [x] Fermeture WS `1008` traitée en état d'auth : `wsState "unauthorized"`,
+  aucune retentative, purge du token unifiée avec la garde SSE existante
+  (fait le 2026-07-18).
+- [x] Historique chat borné (cap glissant 500 épargnant les messages
+  pending/failed, purge de `runIdToMessageId`) — fait le 2026-07-18.
+- [x] État du chat conservé au changement d'onglet : `useChat` remonté au
+  niveau App, panneaux chat/logs montés en permanence (masqués par `hidden` +
+  `inert` + `aria-hidden`) — fait le 2026-07-18.
+- [x] Interruption via `chat.abort` (`abortRun` côté client gateway, frames
+  `abort`/`abort-ok`/`abort-error`, bouton « Interrompre » pendant la réponse,
+  états en attente/interrompu/échoué affichés) — fait le 2026-07-18.
 - [ ] Vérifier la livraison WhatsApp par un test d'intégration reproductible :
   message envoyé depuis le dashboard, réponse visible dans le dashboard et dans
   le canal d'origine, sans doublon.
@@ -262,21 +270,25 @@ chat ne sont pas fiables tant qu'elles ne sont pas terminées.
 
 Chacune tient en quelques lignes ; à grouper dans un même lot de nettoyage.
 
-- [ ] `web/vite` : déplacer `tailwindcss`/`@tailwindcss/vite` en
-  `devDependencies` ; ajouter `remark-gfm` à `react-markdown` (tableaux et
-  listes de tâches de l'agent rendus en texte brut sinon).
-- [ ] `App.tsx` : supprimer la variante `xs:` inexistante (183), le `refresh`
-  inutilisé (63) et dédoublonner les `aria-label` des deux `nav` (156, 199).
-- [ ] `ChatPanel.tsx:104` : respecter `prefers-reduced-motion` pour le
+- [x] `web` : `tailwindcss`/`@tailwindcss/vite` déplacés en `devDependencies`
+  (fait le 2026-07-17). Reste : ajouter `remark-gfm` à `react-markdown`
+  (tableaux et listes de tâches de l'agent rendus en texte brut sinon).
+- [ ] `App.tsx` : supprimer la variante `xs:` inexistante et dédoublonner les
+  `aria-label` des deux `nav` (le `refresh` inutilisé a été retiré avec la
+  refonte de `usePingHistory`).
+- [ ] `ChatPanel.tsx` : respecter `prefers-reduced-motion` pour le
   `scrollTo` smooth (`matchMedia`).
-- [ ] `LogsPanel.tsx` : `aria-hidden` sur le point de statut (72) et remise à
-  zéro de « tail tronqué » après un frame `reset` (119).
+- [x] `LogsPanel.tsx` : `aria-hidden` sur le point décoratif, « tail tronqué »
+  remis à zéro sur `reset` (fait le 2026-07-18).
 - [ ] `index.css:5` : retirer `Inter` de la pile de polices (UI_UX.md §3
   prescrit la sans-serif système).
-- [ ] `openclaw-status.ts:178-180` : ne plus laisser un vieux `lastError`
-  maintenir `whatsappHealthy` à faux après rétablissement du canal.
-- [ ] `status-collector.ts:72` : mettre en file un `refresh()` reçu pendant un
-  cycle en cours au lieu de l'ignorer.
+- [x] `openclaw-status.ts` : `lastError` devenu informatif, ne dégrade plus un
+  canal WhatsApp rétabli (fait le 2026-07-17, testé).
+- [x] `status-collector.ts` : un `refresh()` reçu pendant un cycle est mis en
+  file et déclenche une collecte immédiate en fin de cycle (fait le
+  2026-07-17, testé).
+- [x] README de `web/` réécrit pour clawdeck (commandes et structure réelles)
+  — fait le 2026-07-17.
 
 ## P5 — Améliorations après les trois phases
 
