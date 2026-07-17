@@ -99,4 +99,29 @@ describe("StatusCollector", () => {
     expect(errors).toEqual(["temporary failure"]);
     expect(collector.current).toEqual({ ok: true });
   });
+
+  test("met en file un refresh reçu pendant un cycle en cours", async () => {
+    let calls = 0;
+    let releaseFirst: (() => void) | null = null;
+    const collector = new StatusCollector(async () => {
+      calls += 1;
+      if (calls === 1) {
+        await new Promise<void>((resolve) => {
+          releaseFirst = resolve;
+        });
+      }
+      return calls;
+    }, { intervalMs: 10_000 });
+
+    collector.start();
+    await waitFor(() => releaseFirst !== null);
+
+    // Refresh pendant le premier cycle : il ne doit pas être perdu.
+    collector.refresh();
+    releaseFirst!();
+
+    await waitFor(() => calls >= 2);
+    expect(calls).toBe(2);
+    await collector.stop();
+  });
 });

@@ -92,6 +92,26 @@ describe("readOpenClawRuntime", () => {
     expect(result.whatsapp.healthy).toBeNull();
   });
 
+  test("un lastError ancien ne dégrade pas un canal WhatsApp rétabli", async () => {
+    const result = await readOpenClawRuntime(source({
+      getWhatsAppStatus: async () => ({
+        channels: {
+          whatsapp: {
+            configured: true,
+            linked: true,
+            running: true,
+            connected: true,
+            healthState: "healthy",
+            lastError: "stream errored (515)",
+          },
+        },
+      }),
+    }));
+
+    expect(result.whatsapp.healthy).toBe(true);
+    expect(result.whatsapp.lastError).toBe("stream errored (515)");
+  });
+
   test("laisse le modèle configuré à null quand agents.list échoue", async () => {
     const result = await readOpenClawRuntime(source({
       getAgentsSummary: async () => {

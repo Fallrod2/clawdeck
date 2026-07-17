@@ -13,6 +13,7 @@ export class StatusCollector<T> {
   private timer: ReturnType<typeof setTimeout> | null = null;
   private inFlight: Promise<void> | null = null;
   private running = false;
+  private refreshQueued = false;
 
   constructor(
     private readonly collect: () => Promise<T>,
@@ -39,6 +40,13 @@ export class StatusCollector<T> {
 
   refresh(): void {
     if (!this.running) return;
+    // Un refresh pendant un cycle en cours n'est pas perdu : il est mis en
+    // file et déclenche une nouvelle collecte dès la fin du cycle courant
+    // (un changement d'état gateway pendant une collecte serait sinon ignoré).
+    if (this.inFlight) {
+      this.refreshQueued = true;
+      return;
+    }
     if (this.timer) {
       clearTimeout(this.timer);
       this.timer = null;
@@ -78,6 +86,11 @@ export class StatusCollector<T> {
     void cycle.finally(() => {
       if (this.inFlight === cycle) this.inFlight = null;
       if (!this.running) return;
+      if (this.refreshQueued) {
+        this.refreshQueued = false;
+        this.beginCycle();
+        return;
+      }
       const elapsedMs = Date.now() - startedAt;
       const delayMs = Math.max(0, this.options.intervalMs - elapsedMs);
       this.timer = setTimeout(() => {

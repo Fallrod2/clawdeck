@@ -1,32 +1,34 @@
-# React + TypeScript + Vite
+# clawdeck — frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+Front React + Vite + Tailwind (thème sombre, interface française) du dashboard
+clawdeck. Les règles visuelles et d'interaction sont dans `../docs/UI_UX.md`
+(référence obligatoire) ; le contexte produit dans `../CLAUDE.md`.
 
-Currently, two official plugins are available:
+## Commandes
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+Depuis ce dossier (ou via les scripts racine qui les enchaînent) :
 
-## React Compiler
-
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the Oxlint configuration
-
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
-
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
+```bash
+bun install        # dépendances (lockfile bun.lock)
+bun run dev        # serveur Vite sur localhost:5173, proxy /api → backend :3001
+bun run typecheck  # tsc -b
+bun run lint       # oxlint
+bun run build      # build de production dans dist/ (servi par le backend Hono)
 ```
 
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+En dev, lancer plutôt `bun run dev` à la RACINE du repo : il démarre backend
+et front ensemble (voir `../dev.ts`). Le proxy Vite relaie aussi le WebSocket
+du chat (`ws: true`).
+
+## Structure
+
+```
+src/components/   panneaux et cartes (statuts, chat, logs, graphe latence)
+src/hooks/        flux temps réel (SSE statuts/logs, WS chat, historique pings)
+src/lib/          types partagés, frames WS, token navigateur
+src/index.css     tokens de thème et styles globaux (source de vérité visuelle)
+```
+
+Principes : aucun secret dans le bundle, token saisi par l'utilisateur et
+stocké côté navigateur, états chargement/vide/erreur/périmé toujours rendus,
+responsive dès 320 px.

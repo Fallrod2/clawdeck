@@ -195,9 +195,12 @@ export async function readOpenClawRuntime(
     whatsappSummary?.lastMessageAt,
     whatsappSummary?.lastEventAt,
   ].map(numberValue).filter((value): value is number => value !== null);
+  // lastError est informatif (dernière erreur connue, possiblement ancienne) :
+  // il reste affiché mais ne dégrade pas la santé d'un canal par ailleurs
+  // connecté et sain — sinon un incident passé resterait rouge pour toujours.
   const whatsappHealthy = configuredWhatsApp === null || linked === null || running === null || connected === null
     ? null
-    : configuredWhatsApp && linked && running && connected && healthState !== "unhealthy" && !lastError;
+    : configuredWhatsApp && linked && running && connected && healthState !== "unhealthy";
 
   const errors = [...new Set(settledErrors(results))];
   const selectedNormalized = selectedRef?.toLowerCase() ?? null;
