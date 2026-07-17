@@ -24,7 +24,7 @@ Contraintes permanentes :
 - Pas d'endpoint d'exécution shell arbitraire et pas de dépendance lourde sans
   bénéfice mesurable.
 
-## État constaté — 2026-07-10
+## État constaté — 2026-07-17 (revue complète : `docs/REVUE-2026-07-17.md`)
 
 - [x] Backend Bun/Hono, front React/Vite/Tailwind et service launchd.
 - [x] Auth bearer pour l'API et authentification de la WebSocket navigateur.
@@ -38,7 +38,11 @@ Contraintes permanentes :
 - [ ] Phase 2 robuste : le chat fonctionne, mais son protocole, sa reconnexion,
   ses accusés d'envoi et sa déduplication restent fragiles.
 - [ ] Phase 3 : aucune notification dashboard/ntfy n'est implémentée.
-- [ ] Qualité : aucun test automatisé ni workflow CI n'existe.
+- [ ] Qualité : 16 tests unitaires ciblés existent (network, collecteurs, logs,
+  openclaw-status) mais rien sur env, db, routes HTTP/WS ni gateway/client, et
+  aucune CI.
+- [ ] Le chat est cassé en mode dev : le proxy Vite ne relaie pas les
+  WebSockets (voir P0).
 
 ## P0 — Fiabiliser les fondations
 
@@ -57,25 +61,42 @@ chat ne sont pas fiables tant qu'elles ne sont pas terminées.
   `-W` (attente de réponse) et un watchdog Bun qui tue/récolte le sous-processus
   en cas de dépassement ; tester succès, sortie non nulle et processus muet.
 - [ ] Durcir et centraliser la validation de configuration au démarrage.
-  - Valider `PORT`, les URL, les délais et les chemins avec des erreurs lisibles.
+  - Valider `PORT`, les URL, les délais et les chemins avec des erreurs lisibles
+    (aujourd'hui `PORT=abc` donne `NaN` passé à `Bun.serve`).
   - Refuser `AUTH_TOKEN=change-me`, les tokens trop courts et les valeurs vides.
   - Autoriser `BIND_HOST` uniquement pour loopback ou les plages Tailscale
-    attendues, au lieu de refuser uniquement `0.0.0.0`.
-  - Utiliser `/health` pour la sonde HTTP OpenClaw et aligner le commentaire de
-    `checkGateway` sur le comportement réel.
+    attendues : le garde actuel ne refuse que `0.0.0.0` et laisse passer `::`
+    (wildcard IPv6, équivalent exact) ou une IP LAN.
+  - [x] Utiliser `/health` pour la sonde HTTP OpenClaw (fait, `checks.ts:21`).
+  - Centraliser la comparaison de tokens en constant-time
+    (`crypto.timingSafeEqual`) pour l'API, le WS chat et le futur `/notify`.
+- [ ] Corriger le proxy Vite : ajouter `ws: true` à l'entrée `/api` de
+  `web/vite.config.ts` — sans quoi `/api/chat/ws` n'atteint jamais le backend
+  en dev (une ligne, prod non affectée).
+- [ ] Mettre le log-tailer en pause quand la gateway est déconnectée : le poll
+  actuel (2 s) émet une erreur « gateway not connected » toutes les 2 s vers
+  tous les clients SSE logs ; reprendre sur l'événement `status`.
+- [ ] Protéger `getHistory().then(...)` (`index.ts:248`) par un `.catch` et un
+  garde `readyState` avant `ws.send`.
 - [x] Corriger la détection du modèle Ollama : un autre tag du même modèle ne
   doit pas faire croire que le tag de fallback configuré est disponible.
-- [ ] Valider toutes les entrées HTTP/WS : `hours` fini et borné, texte de chat
-  avec taille maximale, formes de messages explicites et erreurs stables.
+- [ ] Valider toutes les entrées HTTP/WS : `hours` fini et borné (confirmé :
+  `?hours=abc` propage `NaN` jusqu'à la requête SQLite au lieu d'un 400),
+  texte de chat avec taille maximale (aucune borne aujourd'hui), formes de
+  messages explicites et erreurs stables.
 - [ ] Stabiliser le client gateway selon le protocole OpenClaw installé.
+  - Ajouter un watchdog de handshake : si le socket s'ouvre mais que
+    `connect.challenge`/`connect-ok` n'arrive jamais, le client reste
+    aujourd'hui bloqué indéfiniment (ni connecté, ni en reconnexion) —
+    fermer le socket après un délai borné.
   - Négocier la plage de protocoles supportée (actuellement v3-v4) au lieu de
     forcer v4, puis vérifier le protocole réellement négocié.
   - Exploiter `hello-ok.features` avant d'appeler une méthode optionnelle et
     respecter les limites annoncées dans `hello-ok.policy`.
-  - Ajouter un timeout à chaque RPC et traiter `connect` refusé, `UNAVAILABLE`,
-    `retryAfterMs`, erreur socket et fermeture avec backoff + jitter.
-  - Remettre à zéro la route de livraison à chaque déconnexion/changement de
-    session et se désabonner proprement à l'arrêt.
+  - [x] Timeout par RPC (fait, `client.ts:261-280`) ; reste : traiter `connect`
+    refusé, `UNAVAILABLE`, `retryAfterMs` et ajouter du jitter au backoff.
+  - [x] Remise à zéro de la route de livraison à la déconnexion (fait,
+    `client.ts:104-110`) ; reste : désabonnement propre à l'arrêt.
   - Suivre `seq`; en cas de trou, recharger `health`, les sessions et
     l'historique au lieu de supposer que les événements sont complets.
   - Auditer les scopes, documenter pourquoi `operator.admin` est nécessaire et
@@ -100,15 +121,34 @@ chat ne sont pas fiables tant qu'elles ne sont pas terminées.
   - Respecter la redaction OpenClaw, ajouter une limite de taille et gérer un
     client lent sans accumuler une file illimitée.
 - [ ] Améliorer le moniteur réseau.
-  - Montrer disponibilité, pertes et périodes sans données en plus de la latence.
-  - Rendre la tolérance du tooltip dépendante de la taille réelle des buckets.
+  - Montrer disponibilité, pertes et périodes sans données en plus de la
+    latence : p50/p95 et % d'échec par série sous le graphe (les buckets
+    `ok=0` existent déjà côté SQL).
+  - Casser le tracé quand deux points sont séparés de plus de ~1,5 × bucket :
+    aujourd'hui `LatencyChart` relie artificiellement les points qui encadrent
+    une période où clawdeck était éteint.
+  - Corriger la race de `usePingHistory` au changement de période (abort de la
+    requête en vol dans le cleanup, sinon 24 h peut écraser 7 j).
+  - Rendre la tolérance du tooltip dépendante de la taille réelle des buckets
+    et rendre les valeurs accessibles au clavier avec une synthèse textuelle.
   - Distinguer une panne Internet d'une panne de passerelle locale.
+  - Invalider le cache de `detectDefaultGateway` (TTL ou échecs répétés) : une
+    bascule de route par défaut fige les pings « orange » sur l'ancienne IP.
   - Exposer l'âge du dernier échantillon pour ne jamais afficher une ancienne
     valeur comme si elle était fraîche.
 - [x] Retourner une erreur d'auth claire dans `TokenGate` et arrêter la boucle de
   reconnexion sur 401 jusqu'à la saisie d'un nouveau token.
 - [ ] Ajouter `/api/healthz` minimal pour clawdeck (sans secret ni détails) et un
-  état « données périmées » dans l'interface.
+  état « données périmées » dans l'interface : badge d'âge (« il y a 12 s »)
+  recalculé chaque seconde sur les cartes, tones dégradés au-delà d'un seuil —
+  aujourd'hui un SSE figé laisse les cartes vertes avec une heure de mise à
+  jour jamais recalculée.
+- [ ] Donner un backoff exponentiel plafonné aux trois reconnexions front
+  (`useChat`, `useStatusStream`, `useLogStream` : retry fixe 3 s à l'infini)
+  et relancer sur `online`/`visibilitychange`.
+- [ ] Arrêter proprement `useLogStream` et `usePingHistory` sur 401 (comme le
+  fait déjà `useStatusStream`) au lieu d'afficher « HTTP 401 » brut ou
+  d'ignorer l'erreur en silence.
 
 ## P2 — Achever le chat riche
 
@@ -116,7 +156,10 @@ chat ne sont pas fiables tant qu'elles ne sont pas terminées.
   les `any` aux frontières du backend et du hook React.
 - [ ] Fiabiliser l'identité et l'ordre des messages.
   - Utiliser les identifiants stables de la gateway ; ne plus dédupliquer deux
-    vrais messages uniquement parce que leur rôle et leur texte sont identiques.
+    vrais messages uniquement parce que leur rôle et leur texte sont identiques
+    (confirmé réel, `useChat.ts:145` : renvoyer deux fois « ok » depuis
+    WhatsApp supprime silencieusement le second du miroir — ne dédupliquer
+    l'écho que contre les messages `local-*` récents non réconciliés).
   - Réconcilier l'écho optimiste, l'accusé `chat.send`, le streaming, le miroir
     `session.message` et l'historique après reconnexion.
   - Recharger/réconcilier l'historique même si l'UI contient déjà des messages.
@@ -126,6 +169,14 @@ chat ne sont pas fiables tant qu'elles ne sont pas terminées.
   la WebSocket vers clawdeck est fermée.
 - [x] Afficher les arguments, mises à jour et résultats d'outils dans des blocs
   repliables, avec état d'erreur et JSON formaté de façon bornée.
+- [ ] Traiter la fermeture WS `1008` (unauthorized / auth timeout) comme une
+  erreur d'auth côté front : `useChat.ts` ignore `ev.code` et re-tente le même
+  token rejeté toutes les 3 s indéfiniment.
+- [ ] Borner l'historique chat en mémoire (cap glissant sur `messages` et
+  purge de `runIdToMessageId`) comme les logs le sont déjà (500).
+- [ ] Conserver l'état du chat au changement d'onglet : le démontage de
+  `ChatPanel` ferme le WS et perd streaming, tool calls et messages
+  optimistes ; remonter `useChat` au niveau App ou masquer sans démonter.
 - [ ] Ajouter l'interruption d'un run via `chat.abort` et afficher clairement les
   états en attente, interrompu et échoué.
 - [ ] Vérifier la livraison WhatsApp par un test d'intégration reproductible :
@@ -156,7 +207,9 @@ chat ne sont pas fiables tant qu'elles ne sont pas terminées.
   couvrent backend et frontend avec une seule commande.
 - [ ] Écrire des tests unitaires Bun pour : validation env, payload signé,
   identité device, timeouts/reconnexion RPC, parsing des événements, agrégation
-  SQLite et validation des routes API.
+  SQLite et validation des routes API. (16 tests existent déjà — network,
+  collecteurs, logs, openclaw-status — mais aucun sur ces zones-là, qui sont
+  précisément celles où la revue a trouvé les bugs.)
 - [ ] Écrire des tests d'intégration avec fausses gateway/Ollama/ntfy et une base
   temporaire ; ne jamais dépendre de l'instance OpenClaw réelle dans la CI.
 - [ ] Ajouter un smoke test frontend pour auth, rendu des statuts, reconnexion et
@@ -179,11 +232,38 @@ chat ne sont pas fiables tant qu'elles ne sont pas terminées.
 - [ ] Remplacer le README Vite générique de `web/` par les commandes et choix
   propres à clawdeck, puis synchroniser README/CLAUDE.md avec l'état réel.
 
+## Corrections rapides (constats mineurs de la revue 2026-07-17)
+
+Chacune tient en quelques lignes ; à grouper dans un même lot de nettoyage.
+
+- [ ] `web/vite` : déplacer `tailwindcss`/`@tailwindcss/vite` en
+  `devDependencies` ; ajouter `remark-gfm` à `react-markdown` (tableaux et
+  listes de tâches de l'agent rendus en texte brut sinon).
+- [ ] `App.tsx` : supprimer la variante `xs:` inexistante (183), le `refresh`
+  inutilisé (63) et dédoublonner les `aria-label` des deux `nav` (156, 199).
+- [ ] `ChatPanel.tsx:104` : respecter `prefers-reduced-motion` pour le
+  `scrollTo` smooth (`matchMedia`).
+- [ ] `LogsPanel.tsx` : `aria-hidden` sur le point de statut (72) et remise à
+  zéro de « tail tronqué » après un frame `reset` (119).
+- [ ] `index.css:5` : retirer `Inter` de la pile de polices (UI_UX.md §3
+  prescrit la sans-serif système).
+- [ ] `openclaw-status.ts:178-180` : ne plus laisser un vieux `lastError`
+  maintenir `whatsappHealthy` à faux après rétablissement du canal.
+- [ ] `status-collector.ts:72` : mettre en file un `refresh()` reçu pendant un
+  cycle en cours au lieu de l'ignorer.
+
 ## P5 — Améliorations après les trois phases
 
 À faire seulement si les phases précédentes sont fiables et si l'usage réel le
 justifie.
 
+- [ ] Bandeau d'anomalies récentes sous le résumé global : dernier échec de
+  sonde ou déconnexion avec horodatage, visible même après retour au vert.
+- [ ] Reprise des logs par curseur (`Last-Event-ID` SSE) pour ne rien perdre
+  entre deux connexions.
+- [ ] Actions de pilotage bornées et confirmées (relancer le canal WhatsApp,
+  forcer un re-check) via des opérations OpenClaw explicites — dans le respect
+  de la règle « pas de commande système générique » ci-dessous.
 - [ ] Résumé d'usage et de quota via les RPC OpenClaw (`usage.status`/
   `usage.cost`), sans nouvelle persistance.
 - [ ] Vue diagnostic en lecture seule : version OpenClaw, stabilité récente,
