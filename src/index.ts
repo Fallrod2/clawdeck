@@ -242,12 +242,32 @@ app.get(
         }, AUTH_TIMEOUT_MS);
       },
       onMessage(evt, ws) {
-        let msg: Record<string, any>;
+        let parsed: unknown;
         try {
-          msg = JSON.parse(evt.data as string);
+          parsed = JSON.parse(evt.data as string);
         } catch {
           return;
         }
+        // Frame client typée a minima ; un type inconnu (front plus récent que
+        // ce backend) est ignoré silencieusement, jamais une erreur.
+        const msg =
+          parsed && typeof parsed === "object" && !Array.isArray(parsed)
+            ? (parsed as Record<string, unknown>)
+            : null;
+        if (!msg) return;
+
+        // Réponse à CE client, seulement s'il est encore vivant. Le readyState
+        // du WSContext étant figé à sa création (adaptateur Bun), l'état
+        // vivant se lit sur le socket brut — indispensable pour les accusés
+        // asynchrones (sendChatMessage/abortRun résolus après coup).
+        const reply = (frame: unknown) => {
+          if (ws.raw?.readyState !== 1) return;
+          try {
+            ws.send(JSON.stringify(frame));
+          } catch {
+            // client fermé entre-temps ; nettoyé par onClose
+          }
+        };
 
         if (!authed) {
           if (msg.type === "auth" && safeTokenEqual(msg.token, env.authToken)) {
@@ -284,20 +304,44 @@ app.get(
         }
 
         if (msg.type === "send" && typeof msg.text === "string" && msg.text.trim()) {
+          // Accusés d'envoi : le front joint un clientMessageId, renvoyé dans
+          // send-ok/send-error pour réconcilier son message optimiste. Un
+          // vieux front sans clientMessageId reçoit, comme avant, la frame
+          // error générique en cas d'échec (et rien en cas de succès).
+          const clientMessageId =
+            typeof msg.clientMessageId === "string" && msg.clientMessageId ? msg.clientMessageId : null;
+          const fail = (message: string) =>
+            reply(clientMessageId ? { type: "send-error", clientMessageId, message } : { type: "error", message });
           const text = msg.text.trim();
           if (text.length > MAX_CHAT_TEXT_LENGTH) {
             // Borne d'entrée (revue, constat 8) : rien ne part vers la gateway.
-            ws.send(
-              JSON.stringify({
-                type: "error",
-                message: `message trop long (max ${MAX_CHAT_TEXT_LENGTH} caractères)`,
-              }),
-            );
+            fail(`message trop long (max ${MAX_CHAT_TEXT_LENGTH} caractères)`);
             return;
           }
-          gateway.sendChatMessage(text).catch((err: Error) => {
-            ws.send(JSON.stringify({ type: "error", message: err.message }));
-          });
+          gateway.sendChatMessage(text).then(
+            (result) => {
+              // L'envoi n'est accusé réussi qu'ici, quand chat.send a résolu
+              // côté gateway ; le runId permet au front de lier la réponse.
+              if (!clientMessageId) return;
+              reply({
+                type: "send-ok",
+                clientMessageId,
+                ...(typeof result?.runId === "string" ? { runId: result.runId } : {}),
+              });
+            },
+            (err: Error) => fail(err.message),
+          );
+          return;
+        }
+
+        // Interruption best-effort du run en cours (RPC chat.abort).
+        if (msg.type === "abort") {
+          const runId = typeof msg.runId === "string" && msg.runId ? msg.runId : undefined;
+          gateway.abortRun(runId).then(
+            () => reply({ type: "abort-ok" }),
+            (err: Error) => reply({ type: "abort-error", message: err.message }),
+          );
+          return;
         }
       },
       onClose(_evt, ws) {

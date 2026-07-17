@@ -81,6 +81,7 @@ const ALL_METHODS = [
   "sessions.messages.unsubscribe",
   "chat.history",
   "chat.send",
+  "chat.abort",
 ];
 
 // hello-ok complet et réaliste : tous les champs requis par le schéma
@@ -363,6 +364,45 @@ describe("GatewayClient — suivi de seq", () => {
     socket.receive({ type: "event", event: "agent", payload: {}, seq: 1 });
     socket.receive({ type: "event", event: "agent", payload: {}, seq: 2 });
     expect(resyncs.length).toBe(1);
+
+    client.stop();
+  });
+});
+
+describe("GatewayClient — abortRun", () => {
+  test("après handshake : frame chat.abort avec la clé de session et le runId", async () => {
+    const { client, sockets } = createClient();
+    client.start();
+    const socket = sockets[0]!;
+    performHandshake(socket);
+
+    const promise = client.abortRun("run-42");
+    const frame = socket.sentFrames().find((f) => f.method === "chat.abort");
+    expect(frame).toBeDefined();
+    expect(frame!.params).toEqual({ sessionKey: "main", runId: "run-42" });
+
+    socket.receive({ type: "res", id: frame!.id, ok: true, payload: { ok: true } });
+    await expect(promise).resolves.toEqual({ ok: true });
+
+    client.stop();
+  });
+
+  test("sans runId : params réduits à la session ; sans session : rejet immédiat", async () => {
+    const { client, sockets } = createClient();
+    // Avant toute connexion, pas de session principale connue.
+    await expect(client.abortRun("run-1")).rejects.toThrow("no active session");
+
+    client.start();
+    const socket = sockets[0]!;
+    performHandshake(socket);
+
+    const promise = client.abortRun();
+    const frame = socket.sentFrames().find((f) => f.method === "chat.abort");
+    expect(frame).toBeDefined();
+    expect(frame!.params).toEqual({ sessionKey: "main" });
+
+    socket.receive({ type: "res", id: frame!.id, ok: true, payload: {} });
+    await promise;
 
     client.stop();
   });

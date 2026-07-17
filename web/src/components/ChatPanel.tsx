@@ -1,9 +1,11 @@
 // src/components/ChatPanel.tsx — conversation principale, streaming et outils.
+// Le hook useChat vit dans App (la connexion doit survivre au changement
+// d'onglet) : ce panneau ne fait qu'afficher son état et relayer ses actions.
 
 import { useEffect, useRef, useState } from "react";
 import Markdown from "react-markdown";
 import type { ChatMessage, ToolCall } from "../lib/chatTypes";
-import { useChat } from "../hooks/useChat";
+import type { ChatController } from "../hooks/useChat";
 
 function formatPayload(value: unknown): string | null {
   if (value == null) return null;
@@ -51,7 +53,15 @@ function ToolCallCard({ tool }: { tool: ToolCall }) {
   );
 }
 
-function MessageBubble({ message }: { message: ChatMessage }) {
+function MessageBubble({
+  message,
+  onRetry,
+  retryDisabled,
+}: {
+  message: ChatMessage;
+  onRetry?: () => void;
+  retryDisabled?: boolean;
+}) {
   const isUser = message.role === "user";
   const time = new Date(message.timestamp).toLocaleTimeString("fr-FR", {
     hour: "2-digit",
@@ -83,36 +93,57 @@ function MessageBubble({ message }: { message: ChatMessage }) {
             <ToolCallCard key={tool.id} tool={tool} />
           ))}
           {message.error && <p className="mt-2 text-xs text-red-300">{message.error}</p>}
+          {message.sendState === "failed" && onRetry && (
+            <button
+              type="button"
+              onClick={onRetry}
+              disabled={retryDisabled}
+              className="mt-2 min-h-8 rounded-lg border border-red-300/25 bg-red-300/10 px-3 text-xs font-medium text-red-200 transition-colors hover:bg-red-300/15 disabled:cursor-not-allowed disabled:opacity-45"
+            >
+              Réessayer
+            </button>
+          )}
         </div>
+        {/* Les changements d'état d'envoi (envoi en cours → accusé/échec) sont
+            annoncés par la région role="log" aria-live du conteneur : pas de
+            live region imbriquée pour éviter les annonces doublées. L'accusé
+            reste discret : le suffixe « envoi en cours » disparaît. */}
         <p className={`mt-1.5 px-1 font-mono text-[10px] text-[var(--text-muted)] ${isUser ? "text-right" : "text-left"}`}>
-          {isUser ? "Vous" : "OpenClaw"} · {time}{message.pending ? " · en cours" : ""}
+          {isUser ? "Vous" : "OpenClaw"} · {time}
+          {message.pending ? " · en cours" : ""}
+          {message.sendState === "sending" ? " · envoi en cours" : ""}
+          {message.sendState === "failed" && <span className="text-red-300"> · échec de l'envoi</span>}
         </p>
       </div>
     </article>
   );
 }
 
-export function ChatPanel({ token }: { token: string | null }) {
-  const { messages, wsState, gatewayConnected, send } = useChat(token);
+export function ChatPanel({ chat, active }: { chat: ChatController; active: boolean }) {
+  const { messages, wsState, gatewayConnected, activeRunId, abortPending, abortError, send, retry, abort } = chat;
   const [draft, setDraft] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
   const followMessagesRef = useRef(true);
 
   useEffect(() => {
-    if (!followMessagesRef.current) return;
+    // Panneau masqué (autre onglet) : hauteurs à zéro, on rattrape le bas de
+    // conversation au retour sur l'onglet plutôt qu'à chaque message.
+    if (!active || !followMessagesRef.current) return;
     const viewport = scrollRef.current;
     viewport?.scrollTo({ top: viewport.scrollHeight, behavior: "smooth" });
-  }, [messages]);
+  }, [messages, active]);
 
   const connected = wsState === "open" && gatewayConnected;
   const statusLabel =
     wsState === "connecting"
       ? "Connexion au relais"
-      : wsState !== "open"
-        ? "Relais déconnecté"
-        : gatewayConnected
-          ? "Gateway connectée"
-          : "Gateway indisponible";
+      : wsState === "unauthorized"
+        ? "Authentification requise"
+        : wsState !== "open"
+          ? "Relais déconnecté"
+          : gatewayConnected
+            ? "Gateway connectée"
+            : "Gateway indisponible";
 
   function submit() {
     if (!connected || !draft.trim()) return;
@@ -158,12 +189,41 @@ export function ChatPanel({ token }: { token: string | null }) {
             </p>
           </div>
         )}
-        {messages.map((message) => (
-          <MessageBubble key={message.id} message={message} />
-        ))}
+        {messages.map((message) => {
+          const retryId = message.sendState === "failed" ? message.clientMessageId : undefined;
+          return (
+            <MessageBubble
+              key={message.id}
+              message={message}
+              onRetry={retryId ? () => retry(retryId) : undefined}
+              retryDisabled={!connected}
+            />
+          );
+        })}
       </div>
 
       <div className="border-t border-white/8 bg-black/10 p-3 sm:p-4">
+        {activeRunId && (
+          <div className="mb-2 flex min-h-10 items-center justify-between gap-3 rounded-lg border border-amber-300/15 bg-amber-300/6 px-3 py-1.5">
+            <span className="inline-flex items-center gap-2 text-xs text-[var(--text-secondary)]">
+              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-400" aria-hidden />
+              Réponse en cours
+            </span>
+            <button
+              type="button"
+              onClick={abort}
+              disabled={abortPending || wsState !== "open"}
+              className="min-h-8 rounded-md border border-white/12 bg-black/20 px-3 text-xs text-[var(--text-primary)] transition-colors hover:bg-white/8 disabled:cursor-not-allowed disabled:opacity-45"
+            >
+              {abortPending ? "Interruption demandée…" : "Interrompre"}
+            </button>
+          </div>
+        )}
+        {/* Région persistante : un échec d'interruption est annoncé même si la
+            barre « Réponse en cours » a déjà disparu. */}
+        <p className={abortError ? "mb-2 px-1 text-xs text-red-300" : "sr-only"} aria-live="polite">
+          {abortError ? `Interruption impossible : ${abortError}` : ""}
+        </p>
         <form
           className="rounded-xl border border-white/10 bg-black/20 p-2 transition-colors focus-within:border-emerald-300/25"
           onSubmit={(event) => {
@@ -183,7 +243,13 @@ export function ChatPanel({ token }: { token: string | null }) {
                 submit();
               }
             }}
-            placeholder={connected ? "Écrire un message…" : "Envoi indisponible tant que la gateway est hors ligne"}
+            placeholder={
+              connected
+                ? "Écrire un message…"
+                : wsState !== "open"
+                  ? "Envoi indisponible : connexion à clawdeck interrompue"
+                  : "Envoi indisponible tant que la gateway est hors ligne"
+            }
             disabled={!connected}
             className="max-h-32 min-h-12 w-full resize-none bg-transparent px-2 py-1.5 text-sm leading-6 text-[var(--text-primary)] outline-none placeholder:text-[var(--text-muted)] disabled:cursor-not-allowed disabled:opacity-50"
           />

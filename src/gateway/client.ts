@@ -599,6 +599,17 @@ export class GatewayClient extends EventEmitter {
     });
   }
 
+  // Interrompt le run en cours de la session principale (chat.abort,
+  // operator.write — voir SCOPES). Sans runId, la gateway interrompt le run
+  // actif de la session. Le gating de découverte est assuré par request().
+  abortRun(runId?: string): Promise<unknown> {
+    if (!this.mainSessionKey) return Promise.reject(new Error("no active session"));
+    return this.request("chat.abort", {
+      sessionKey: this.mainSessionKey,
+      ...(runId ? { runId } : {}),
+    });
+  }
+
   async getHistory(limit = 50): Promise<unknown> {
     if (!this.mainSessionKey) return null;
     try {
