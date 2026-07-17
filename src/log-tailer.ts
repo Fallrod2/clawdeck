@@ -8,6 +8,10 @@ export type LogTailEvent =
   | { type: "error"; message: string };
 
 export interface LogTailSource {
+  // Reflète GatewayClient.isConnected (compatibilité structurelle immédiate) :
+  // permet de suspendre le poll quand la gateway est déconnectée plutôt que
+  // d'émettre une erreur par tick.
+  readonly isConnected: boolean;
   getLogs(cursor?: number): Promise<GatewayLogTailResult>;
 }
 
@@ -69,6 +73,12 @@ export class LogTailer {
   }
 
   private async readOnce(): Promise<void> {
+    // Gateway déconnectée : on saute la lecture sans émettre d'erreur (sinon
+    // chaque tick enverrait « gateway not connected » à tous les clients SSE).
+    // Le tick suivant reste programmé par beginRead() ; à la reconnexion, la
+    // lecture reprend d'elle-même avec le cursor courant — un cursor invalidé
+    // par un redémarrage de la gateway est couvert par le champ reset.
+    if (!this.source.isConnected) return;
     try {
       const result = await this.source.getLogs(this.cursor);
       this.cursor = result.cursor;

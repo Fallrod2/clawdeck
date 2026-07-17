@@ -24,6 +24,11 @@ const ROLE = "operator";
 const SCOPES = ["operator.read", "operator.write", "operator.admin"];
 const RECONNECT_BASE_MS = 1000;
 const RECONNECT_MAX_MS = 30_000;
+// Délai maximal entre l'ouverture du socket et un connect-ok abouti. Sans ce
+// watchdog, une gateway qui n'envoie jamais connect.challenge (gelée, proxy
+// muet) laisserait le client ni connecté ni en reconnexion, sans récupération
+// possible (voir docs/REVUE-2026-07-17.md, constat backend 2).
+const HANDSHAKE_TIMEOUT_MS = 10_000;
 const REQUEST_TIMEOUT_MS = 5_000;
 
 interface PendingRequest {
@@ -49,6 +54,13 @@ interface DeliveryRoute {
   accountId?: string;
 }
 
+// Points d'injection réservés aux tests (socket factice, watchdog court) ;
+// en production les valeurs par défaut s'appliquent.
+export interface GatewayClientOptions {
+  socketFactory?: (url: string) => WebSocket;
+  handshakeTimeoutMs?: number;
+}
+
 export class GatewayClient extends EventEmitter {
   private ws: WebSocket | null = null;
   private nextId = 1;
@@ -57,19 +69,25 @@ export class GatewayClient extends EventEmitter {
   private connected = false;
   private reconnectAttempt = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private handshakeTimer: ReturnType<typeof setTimeout> | null = null;
   private closedByUs = false;
   private deliveryRoute: DeliveryRoute | null = null;
   private serverVersion: string | null = null;
   private serverUptimeMs: number | null = null;
   mainSessionKey: string | null = null;
+  private readonly socketFactory: (url: string) => WebSocket;
+  private readonly handshakeTimeoutMs: number;
 
   constructor(
     private wsUrl: string,
     private authToken: string,
     identityPath: string,
+    options: GatewayClientOptions = {},
   ) {
     super();
     this.identity = loadOrCreateDeviceIdentity(identityPath);
+    this.socketFactory = options.socketFactory ?? ((url) => new WebSocket(url));
+    this.handshakeTimeoutMs = options.handshakeTimeoutMs ?? HANDSHAKE_TIMEOUT_MS;
   }
 
   start() {
@@ -80,6 +98,7 @@ export class GatewayClient extends EventEmitter {
   stop() {
     this.closedByUs = true;
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    this.clearHandshakeTimer();
     this.ws?.close();
   }
 
@@ -88,8 +107,18 @@ export class GatewayClient extends EventEmitter {
   }
 
   private openSocket() {
-    const ws = new WebSocket(this.wsUrl);
+    const ws = this.socketFactory(this.wsUrl);
     this.ws = ws;
+
+    // Watchdog de handshake : si connect-ok n'aboutit pas à temps (challenge
+    // jamais reçu, réponse perdue), on ferme le socket pour retomber sur le
+    // chemin normal onclose → reconnexion. Le timer appartient à CE socket :
+    // devenu obsolète, il ne doit jamais toucher un socket plus récent.
+    this.clearHandshakeTimer();
+    this.handshakeTimer = setTimeout(() => {
+      this.handshakeTimer = null;
+      if (this.ws === ws && !this.connected) ws.close();
+    }, this.handshakeTimeoutMs);
 
     ws.onmessage = (ev) => {
       let msg: Record<string, any>;
@@ -102,6 +131,8 @@ export class GatewayClient extends EventEmitter {
     };
 
     ws.onclose = () => {
+      // Ne désarme le watchdog que s'il s'agit bien du socket courant.
+      if (this.ws === ws) this.clearHandshakeTimer();
       const wasConnected = this.connected;
       this.connected = false;
       this.mainSessionKey = null;
@@ -114,8 +145,18 @@ export class GatewayClient extends EventEmitter {
     };
   }
 
+  private clearHandshakeTimer() {
+    if (this.handshakeTimer) {
+      clearTimeout(this.handshakeTimer);
+      this.handshakeTimer = null;
+    }
+  }
+
   private scheduleReconnect() {
-    const delay = Math.min(RECONNECT_BASE_MS * 2 ** this.reconnectAttempt, RECONNECT_MAX_MS);
+    const capped = Math.min(RECONNECT_BASE_MS * 2 ** this.reconnectAttempt, RECONNECT_MAX_MS);
+    // Jitter (facteur aléatoire 0,5-1,0) : désynchronise les retentatives
+    // pour ne pas marteler la gateway à cadence fixe à son redémarrage.
+    const delay = capped * (0.5 + Math.random() * 0.5);
     this.reconnectAttempt += 1;
     this.reconnectTimer = setTimeout(() => this.openSocket(), delay);
   }
@@ -208,6 +249,7 @@ export class GatewayClient extends EventEmitter {
       return;
     }
     this.connected = true;
+    this.clearHandshakeTimer();
     this.reconnectAttempt = 0;
     this.mainSessionKey = msg.payload?.snapshot?.sessionDefaults?.mainSessionKey ?? null;
     this.serverVersion = msg.payload?.server?.version ?? null;

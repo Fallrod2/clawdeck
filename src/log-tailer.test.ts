@@ -14,6 +14,7 @@ describe("LogTailer", () => {
     const cursors: Array<number | undefined> = [];
     let nextCursor = 10;
     const tailer = new LogTailer({
+      isConnected: true,
       async getLogs(cursor) {
         cursors.push(cursor);
         nextCursor += 1;
@@ -46,6 +47,7 @@ describe("LogTailer", () => {
     let calls = 0;
     const events: string[] = [];
     const tailer = new LogTailer({
+      isConnected: true,
       async getLogs() {
         calls += 1;
         if (calls === 1) throw new Error("gateway offline");
@@ -60,5 +62,34 @@ describe("LogTailer", () => {
 
     expect(events[0]).toBe("error");
     expect(events).toContain("data");
+  });
+
+  test("reste silencieux tant que la gateway est déconnectée, sans appeler getLogs", async () => {
+    let calls = 0;
+    const events: string[] = [];
+    const source = {
+      isConnected: false,
+      async getLogs() {
+        calls += 1;
+        return { cursor: 7, size: 7, lines: ["{}"], truncated: false, reset: false };
+      },
+    };
+    const tailer = new LogTailer(source, 10);
+    const unsubscribe = tailer.subscribe((event) => events.push(event.type));
+
+    // Plusieurs ticks s'écoulent gateway déconnectée : aucune lecture,
+    // aucun événement (surtout pas une erreur toutes les 2 s en production).
+    await Bun.sleep(50);
+    expect(calls).toBe(0);
+    expect(events).toEqual([]);
+
+    // À la reconnexion, le poll suivant reprend de lui-même.
+    source.isConnected = true;
+    await waitFor(() => events.includes("data"));
+    unsubscribe();
+    await tailer.stop();
+
+    expect(calls).toBeGreaterThanOrEqual(1);
+    expect(events).not.toContain("error");
   });
 });

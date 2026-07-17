@@ -6,6 +6,7 @@ import { serveStatic, upgradeWebSocket, websocket } from "hono/bun";
 import { streamSSE } from "hono/streaming";
 import type { WSContext } from "hono/ws";
 import { env } from "./env";
+import { safeTokenEqual, parseHours, MAX_CHAT_TEXT_LENGTH } from "./validate";
 import { closeDatabase, pruneOldPings, getPingHistoryBucketed } from "./db";
 import { GatewayClient } from "./gateway/client";
 import { collectStatus, type StatusPayload } from "./status";
@@ -45,7 +46,7 @@ app.use("/api/*", async (c, next) => {
   }
   const header = c.req.header("Authorization");
   const token = header?.startsWith("Bearer ") ? header.slice(7) : null;
-  if (token !== env.authToken) {
+  if (!safeTokenEqual(token, env.authToken)) {
     return c.json({ error: "unauthorized" }, 401);
   }
   await next();
@@ -171,7 +172,10 @@ app.get("/api/logs", (c) => {
 // Historique des pings pour le graphe de latence (7j max, voir db.ts).
 // Agrégé en ~360 points côté SQL quel que soit l'intervalle demandé.
 app.get("/api/pings/history", (c) => {
-  const hours = Math.min(Math.max(Number(c.req.query("hours") ?? 24), 1), 24 * 7);
+  const hours = parseHours(c.req.query("hours"));
+  if (hours === null) {
+    return c.json({ error: "invalid hours" }, 400);
+  }
   const since = Date.now() - hours * 60 * 60 * 1000;
   const bucketMs = Math.max(5000, Math.round((hours * 60 * 60 * 1000) / 360));
   return c.json({
@@ -223,6 +227,10 @@ app.get(
   upgradeWebSocket(() => {
     let authed = false;
     let authTimer: ReturnType<typeof setTimeout> | null = null;
+    // L'adaptateur Bun de Hono recrée un WSContext à chaque événement : on
+    // mémorise l'instance ajoutée à chatClients pour retirer LA MÊME au
+    // onClose, sinon le Set fuit un contexte par connexion.
+    let registered: WSContext | null = null;
 
     return {
       onOpen(_evt, ws) {
@@ -239,15 +247,33 @@ app.get(
         }
 
         if (!authed) {
-          if (msg.type === "auth" && msg.token === env.authToken) {
+          if (msg.type === "auth" && safeTokenEqual(msg.token, env.authToken)) {
             authed = true;
             if (authTimer) clearTimeout(authTimer);
+            registered = ws;
             chatClients.add(ws);
             ws.send(JSON.stringify({ type: "auth-ok" }));
             ws.send(JSON.stringify({ type: "gateway-status", connected: gateway.isConnected }));
-            gateway.getHistory().then((messages) => {
-              ws.send(JSON.stringify({ type: "history", messages }));
-            });
+            gateway
+              .getHistory()
+              .then((messages) => {
+                // Le client a pu partir pendant la requête. Le readyState du
+                // WSContext étant figé à sa création (adaptateur Bun), l'état
+                // vivant se lit sur le socket brut.
+                if (ws.raw?.readyState !== 1) return;
+                try {
+                  ws.send(JSON.stringify({ type: "history", messages }));
+                } catch {
+                  // client fermé entre-temps ; nettoyé par onClose
+                }
+              })
+              .catch((err) => {
+                // Log sobre côté serveur, aucun détail envoyé au client : le
+                // chat reste utilisable sans l'historique.
+                console.error(
+                  `[chat] historique gateway indisponible: ${err instanceof Error ? err.message : String(err)}`,
+                );
+              });
           } else {
             ws.close(1008, "unauthorized");
           }
@@ -255,14 +281,26 @@ app.get(
         }
 
         if (msg.type === "send" && typeof msg.text === "string" && msg.text.trim()) {
-          gateway.sendChatMessage(msg.text.trim()).catch((err: Error) => {
+          const text = msg.text.trim();
+          if (text.length > MAX_CHAT_TEXT_LENGTH) {
+            // Borne d'entrée (revue, constat 8) : rien ne part vers la gateway.
+            ws.send(
+              JSON.stringify({
+                type: "error",
+                message: `message trop long (max ${MAX_CHAT_TEXT_LENGTH} caractères)`,
+              }),
+            );
+            return;
+          }
+          gateway.sendChatMessage(text).catch((err: Error) => {
             ws.send(JSON.stringify({ type: "error", message: err.message }));
           });
         }
       },
       onClose(_evt, ws) {
         if (authTimer) clearTimeout(authTimer);
-        chatClients.delete(ws);
+        chatClients.delete(registered ?? ws);
+        registered = null;
       },
     };
   }),
