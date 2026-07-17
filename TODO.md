@@ -249,18 +249,20 @@ chat ne sont pas fiables tant qu'elles ne sont pas terminées.
 - [ ] Ajouter un smoke test frontend pour auth, rendu des statuts, reconnexion et
   envoi de chat. Garder l'outil léger tant qu'un navigateur complet n'est pas
   justifié.
-- [ ] Ajouter une CI qui installe avec lockfiles figés, exécute les checks et
-  construit `web/dist`.
+- [x] CI GitHub Actions (fait le 2026-07-18) : installs `--frozen-lockfile`
+  racine + web, typecheck, lint, tests, build (`.github/workflows/ci.yml`).
 - [ ] Ajouter des en-têtes de sécurité (`CSP`, `frame-ancestors`, `nosniff`,
   `Referrer-Policy`, `Cache-Control` adapté pour l'API) et vérifier que le
   Markdown ne peut pas injecter HTML/URL dangereuse.
 - [ ] Ajouter des logs backend structurés et sobres : démarrage, arrêt, état des
   connexions, erreurs de sonde et reconnexions, jamais les tokens ni le contenu
   du chat.
-- [ ] Rendre le déploiement launchd reproductible : créer le dossier de logs,
-  vérifier `.env` et le build avant bootstrap, valider le plist et documenter
-  mise à jour/rollback. Garder les chemins propres à la machine hors d'un
-  éventuel template générique.
+- [x] Déploiement launchd reproductible (fait le 2026-07-18) :
+  `scripts/install-launchd.sh` idempotent — vérifie `.env` (en exécutant la
+  validation d'env réelle du backend), le build et le plist AVANT tout
+  changement système, crée le dossier de logs, bootout/bootstrap ; rollback
+  documenté dans le README ; `ThrottleInterval` 15 s dans le plist contre les
+  boucles de crash au boot.
 - [ ] Ajouter une procédure de sauvegarde/restauration limitée à la base de
   pings et à l'identité gateway, avec permissions `0600` documentées.
 - [ ] Remplacer le README Vite générique de `web/` par les commandes et choix
@@ -270,18 +272,18 @@ chat ne sont pas fiables tant qu'elles ne sont pas terminées.
 
 Chacune tient en quelques lignes ; à grouper dans un même lot de nettoyage.
 
-- [x] `web` : `tailwindcss`/`@tailwindcss/vite` déplacés en `devDependencies`
-  (fait le 2026-07-17). Reste : ajouter `remark-gfm` à `react-markdown`
-  (tableaux et listes de tâches de l'agent rendus en texte brut sinon).
+- [x] `web` : `tailwindcss`/`@tailwindcss/vite` déplacés en `devDependencies` ;
+  `remark-gfm` ajouté à `react-markdown` (tableaux, listes de tâches, barré —
+  toujours sans `rehype-raw`, HTML échappé) — fait le 2026-07-18.
 - [ ] `App.tsx` : supprimer la variante `xs:` inexistante et dédoublonner les
   `aria-label` des deux `nav` (le `refresh` inutilisé a été retiré avec la
   refonte de `usePingHistory`).
-- [ ] `ChatPanel.tsx` : respecter `prefers-reduced-motion` pour le
-  `scrollTo` smooth (`matchMedia`).
+- [x] `ChatPanel.tsx` : `prefers-reduced-motion` respecté pour le `scrollTo`
+  (fait le 2026-07-18).
 - [x] `LogsPanel.tsx` : `aria-hidden` sur le point décoratif, « tail tronqué »
   remis à zéro sur `reset` (fait le 2026-07-18).
-- [ ] `index.css:5` : retirer `Inter` de la pile de polices (UI_UX.md §3
-  prescrit la sans-serif système).
+- [x] `index.css` : `Inter` retiré, sans-serif système seule (UI_UX.md §3) —
+  fait le 2026-07-18.
 - [x] `openclaw-status.ts` : `lastError` devenu informatif, ne dégrade plus un
   canal WhatsApp rétabli (fait le 2026-07-17, testé).
 - [x] `status-collector.ts` : un `refresh()` reçu pendant un cycle est mis en

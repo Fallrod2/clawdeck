@@ -1,0 +1,36 @@
+# CI clawdeck : installe avec lockfiles figés, vérifie tout, build le front.
+# Aucune instance OpenClaw/Ollama n'est requise : les tests unitaires utilisent
+# des fakes (voir TODO.md P4) et la validation d'env n'est exercée qu'en test.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Installer les dépendances (lockfiles figés)
+        run: |
+          bun install --frozen-lockfile
+          bun install --frozen-lockfile --cwd web
+
+      - name: Typecheck backend + front
+        run: bun run typecheck
+
+      - name: Lint front
+        run: bun run lint
+
+      - name: Tests unitaires
+        run: bun test
+
+      - name: Build de production du front
+        run: bun run build

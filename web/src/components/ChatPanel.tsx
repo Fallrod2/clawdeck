@@ -4,6 +4,11 @@
 
 import { useEffect, useRef, useState } from "react";
 import Markdown from "react-markdown";
+// GFM : tableaux, listes de tâches et texte barré produits par l'agent —
+// sans rehype-raw, le HTML reste échappé (pas de XSS).
+import remarkGfm from "remark-gfm";
+
+const REMARK_PLUGINS = [remarkGfm];
 import type { ChatMessage, ToolCall } from "../lib/chatTypes";
 import type { ChatController } from "../hooks/useChat";
 
@@ -80,7 +85,7 @@ function MessageBubble({
         >
           {message.text ? (
             <div className="prose prose-invert prose-sm max-w-none break-words prose-headings:mb-2 prose-headings:mt-4 prose-p:my-1.5 prose-p:leading-6 prose-a:text-emerald-300 prose-pre:my-3 prose-pre:overflow-x-auto prose-pre:rounded-lg prose-pre:border prose-pre:border-white/8 prose-pre:bg-black/25 prose-code:text-[0.82em]">
-              <Markdown>{message.text}</Markdown>
+              <Markdown remarkPlugins={REMARK_PLUGINS}>{message.text}</Markdown>
             </div>
           ) : message.pending ? (
             <span className="inline-flex items-center gap-1 py-1 text-[var(--text-muted)]" aria-label="Réponse en cours">
@@ -130,7 +135,10 @@ export function ChatPanel({ chat, active }: { chat: ChatController; active: bool
     // conversation au retour sur l'onglet plutôt qu'à chaque message.
     if (!active || !followMessagesRef.current) return;
     const viewport = scrollRef.current;
-    viewport?.scrollTo({ top: viewport.scrollHeight, behavior: "smooth" });
+    // Un behavior explicite ignore la règle CSS prefers-reduced-motion : on
+    // respecte la préférence ici même.
+    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    viewport?.scrollTo({ top: viewport.scrollHeight, behavior: reduceMotion ? "auto" : "smooth" });
   }, [messages, active]);
 
   const connected = wsState === "open" && gatewayConnected;

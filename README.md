@@ -100,16 +100,21 @@ propres à cette machine (Mac mini, utilisateur `claw`) — à adapter pour un
 autre déploiement.
 
 ```bash
-bun run build   # le daemon sert web/dist, donc il faut l'avoir buildé
-
-sudo cp launchd/com.clawdeck.server.plist /Library/LaunchDaemons/com.clawdeck.server.plist
-sudo chown root:wheel /Library/LaunchDaemons/com.clawdeck.server.plist
-sudo launchctl bootstrap system /Library/LaunchDaemons/com.clawdeck.server.plist
+bun run build                        # le daemon sert web/dist
+sudo scripts/install-launchd.sh     # vérifie .env + build, installe, démarre
 ```
+
+Le script est idempotent (mise à jour = même commande) et refuse d'installer
+si `.env` est absent/invalide ou si le build manque — la validation
+d'environnement du backend est exécutée avant tout changement système, pour
+ne jamais installer un daemon qui boucle en crash au boot (le plist a aussi
+un `ThrottleInterval` de 15 s en garde-fou).
 
 Logs : `~/Library/Logs/clawdeck/{stdout,stderr}.log`.
 Statut : `launchctl print system/com.clawdeck.server`.
 Arrêt : `sudo launchctl bootout system/com.clawdeck.server`.
+Rollback : `bootout`, restaurer l'ancien plist (ou `git checkout` puis
+réinstaller), relancer le script.
 
 ## Dépannage
 

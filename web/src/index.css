@@ -2,8 +2,9 @@
 @plugin "@tailwindcss/typography";
 
 :root {
+  /* Sans-serif système (UI_UX.md §3) : aucune police téléchargée. */
   font-family:
-    Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   color: #eef1f0;
   background: #090b0c;
   font-synthesis: none;

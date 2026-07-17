@@ -17,6 +17,10 @@
 	<true/>
 	<key>KeepAlive</key>
 	<true/>
+	<!-- Évite une boucle de crash frénétique (ex. .env invalide au boot) :
+	     launchd attend au moins 15 s entre deux relances. -->
+	<key>ThrottleInterval</key>
+	<integer>15</integer>
 	<key>StandardOutPath</key>
 	<string>/Users/claw/Library/Logs/clawdeck/stdout.log</string>
 	<key>StandardErrorPath</key>
