@@ -59,6 +59,7 @@ export function LogsPanel({ token }: { token: string | null }) {
   }, [visibleEntries]);
 
   const connected = state === "open";
+  const authRequired = state === "auth";
 
   return (
     <section className="overflow-hidden rounded-xl border border-white/8 bg-[var(--surface-panel)]">
@@ -69,8 +70,11 @@ export function LogsPanel({ token }: { token: string | null }) {
             <p className="mt-1 text-xs text-[var(--text-muted)]">Tail filtré par la gateway · aucune persistance clawdeck</p>
           </div>
           <span className="flex items-center gap-2 rounded-full border border-white/8 bg-black/15 px-2.5 py-1 text-[10px] text-[var(--text-secondary)]" aria-live="polite">
-            <span className={`h-1.5 w-1.5 rounded-full ${paused ? "bg-neutral-500" : connected ? "bg-emerald-400" : "bg-amber-400"}`} />
-            {paused ? "En pause" : connected ? "En direct" : "Reconnexion"}
+            <span
+              className={`h-1.5 w-1.5 rounded-full ${paused ? "bg-neutral-500" : connected ? "bg-emerald-400" : authRequired ? "bg-red-400" : "bg-amber-400"}`}
+              aria-hidden
+            />
+            {paused ? "En pause" : connected ? "En direct" : authRequired ? "Authentification requise" : "Reconnexion"}
           </span>
         </div>
 
@@ -120,6 +124,12 @@ export function LogsPanel({ token }: { token: string | null }) {
         </p>
       </div>
 
+      {authRequired && (
+        <div className="border-b border-white/8 bg-white/3 px-4 py-2.5 text-xs text-[var(--text-secondary)] lg:px-5" role="status">
+          Authentification requise — recharger la page.
+        </div>
+      )}
+
       {error && (
         <div className="border-b border-amber-300/10 bg-amber-300/5 px-4 py-2.5 text-xs text-amber-200 lg:px-5" role="status">
           {error}
@@ -140,7 +150,11 @@ export function LogsPanel({ token }: { token: string | null }) {
           <div className="flex h-full min-h-96 flex-col items-center justify-center px-6 text-center text-[var(--text-muted)]">
             <span className="text-lg" aria-hidden>&gt;_</span>
             <p className="mt-2 font-sans text-sm text-[var(--text-secondary)]">
-              {entries.length ? "Aucune ligne ne correspond aux filtres" : "En attente des logs OpenClaw"}
+              {entries.length
+                ? "Aucune ligne ne correspond aux filtres"
+                : authRequired
+                  ? "Flux de logs arrêté — authentification requise"
+                  : "En attente des logs OpenClaw"}
             </p>
           </div>
         ) : (
