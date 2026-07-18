@@ -204,12 +204,13 @@ describe("GatewayClient — négociation hello-ok", () => {
     );
     expect(client.supportsMethod("sessions.messages.subscribe")).toBe(false);
 
-    // setupSession ne doit émettre AUCUN abonnement quand la méthode n'est
-    // pas annoncée (et il n'interroge plus sessions.list : la route de
-    // livraison est résolue côté gateway sur chat.send deliver:true).
+    // setupSession résout la route (sessions.list) puis DOIT s'arrêter là :
+    // aucun abonnement quand la méthode n'est pas annoncée.
+    await waitFor(() => socket.sentFrames().some((f) => f.method === "sessions.list"));
+    const listReq = socket.sentFrames().find((f) => f.method === "sessions.list")!;
+    socket.receive({ type: "res", id: listReq.id, ok: true, payload: { sessions: [{ key: "main" }] } });
     await Bun.sleep(20);
     expect(socket.sentFrames().some((f) => f.method === "sessions.messages.subscribe")).toBe(false);
-    expect(socket.sentFrames().some((f) => f.method === "sessions.list")).toBe(false);
     client.stop();
   });
 });
@@ -369,29 +370,76 @@ describe("GatewayClient — suivi de seq", () => {
 });
 
 describe("GatewayClient — sendChatMessage", () => {
-  test("deliver:true sans AUCUN champ originating* (réservés operator.admin)", async () => {
+  // Répond au sessions.list de setupSession avec l'entrée fournie, puis
+  // attend que la route soit digérée.
+  async function answerSessionsList(socket: FakeSocket, entry: Record<string, unknown>) {
+    await waitFor(() => socket.sentFrames().some((f) => f.method === "sessions.list"));
+    const req = socket.sentFrames().find((f) => f.method === "sessions.list")!;
+    socket.receive({ type: "res", id: req.id, ok: true, payload: { sessions: [entry] } });
+    await Bun.sleep(10);
+  }
+
+  test("route WhatsApp connue : deliver + originating* épinglés (admin assumé)", async () => {
     const { client, sockets } = createClient();
     client.start();
     const socket = sockets[0]!;
     performHandshake(socket);
+    await answerSessionsList(socket, {
+      key: "main",
+      deliveryContext: { channel: "whatsapp", to: "+33600000000", accountId: "default" },
+    });
 
     const promise = client.sendChatMessage("bonjour");
     const frame = socket.sentFrames().find((f) => f.method === "chat.send");
     expect(frame).toBeDefined();
     const params = frame!.params as Record<string, unknown>;
-    expect(params.sessionKey).toBe("main");
-    expect(params.message).toBe("bonjour");
     expect(params.deliver).toBe(true);
-    expect(typeof params.idempotencyKey).toBe("string");
-    // Régression du 2026-07-18 : la gateway rejette ces champs hors admin
-    // (« originating route fields require admin scope »).
-    expect(params).not.toHaveProperty("originatingChannel");
-    expect(params).not.toHaveProperty("originatingTo");
-    expect(params).not.toHaveProperty("originatingAccountId");
+    expect(params.originatingChannel).toBe("whatsapp");
+    expect(params.originatingTo).toBe("+33600000000");
+    expect(params.originatingAccountId).toBe("default");
 
     socket.receive({ type: "res", id: frame!.id, ok: true, payload: { runId: "r1", status: "queued" } });
     await expect(promise).resolves.toEqual({ runId: "r1", status: "queued" });
+    client.stop();
+  });
 
+  test("session basculée webchat : la route réelle est reprise du premier candidat non-webchat", async () => {
+    const { client, sockets } = createClient();
+    client.start();
+    const socket = sockets[0]!;
+    performHandshake(socket);
+    // deliveryContext ET last* pollués par webchat ; origin porte encore la
+    // vraie route — le scénario constaté en prod le 2026-07-18.
+    await answerSessionsList(socket, {
+      key: "main",
+      deliveryContext: { channel: "webchat" },
+      lastChannel: "webchat",
+      origin: { provider: "whatsapp", to: "+33600000000" },
+    });
+
+    // stop() rejettera la requête en attente : rejet absorbé, seul le
+    // contenu de la frame nous intéresse ici.
+    client.sendChatMessage("bonjour").catch(() => {});
+    const frame = socket.sentFrames().find((f) => f.method === "chat.send")!;
+    const params = frame.params as Record<string, unknown>;
+    expect(params.originatingChannel).toBe("whatsapp");
+    expect(params.originatingTo).toBe("+33600000000");
+    client.stop();
+  });
+
+  test("aucune route connue : deliver seul, aucun champ originating*", async () => {
+    const { client, sockets } = createClient();
+    client.start();
+    const socket = sockets[0]!;
+    performHandshake(socket);
+    await answerSessionsList(socket, { key: "main", deliveryContext: { channel: "webchat" } });
+
+    client.sendChatMessage("bonjour").catch(() => {});
+    const frame = socket.sentFrames().find((f) => f.method === "chat.send")!;
+    const params = frame.params as Record<string, unknown>;
+    expect(params.deliver).toBe(true);
+    expect(params).not.toHaveProperty("originatingChannel");
+    expect(params).not.toHaveProperty("originatingTo");
     client.stop();
   });
 });
@@ -442,7 +490,10 @@ describe("GatewayClient — stop()", () => {
     const socket = sockets[0]!;
     performHandshake(socket);
 
-    // setupSession : abonnement au miroir de session, acquitté.
+    // setupSession : sessions.list (route) puis abonnement, tous deux acquittés.
+    await waitFor(() => socket.sentFrames().some((f) => f.method === "sessions.list"));
+    const listReq = socket.sentFrames().find((f) => f.method === "sessions.list")!;
+    socket.receive({ type: "res", id: listReq.id, ok: true, payload: { sessions: [{ key: "main" }] } });
     await waitFor(() => socket.sentFrames().some((f) => f.method === "sessions.messages.subscribe"));
     const subReq = socket.sentFrames().find((f) => f.method === "sessions.messages.subscribe")!;
     socket.receive({ type: "res", id: subReq.id, ok: true, payload: {} });

@@ -121,18 +121,21 @@ chat ne sont pas fiables tant qu'elles ne sont pas terminées.
   - [x] Remise à zéro de la route de livraison et de tout l'état négocié à la
     déconnexion ; désabonnement `sessions.messages.unsubscribe` best-effort à
     l'arrêt.
-  - [x] Audit des scopes : `operator.admin` retiré, tout fonctionne en
-    read/write. Correction du 2026-07-18 après constat en prod : la table de
-    scopes ne dit pas tout — le handler `chat.send` réserve les champs
-    `originating*` explicites à admin (« originating route fields require
-    admin scope »). Réglé proprement : `deliver: true` seul (write), la
-    gateway résout elle-même la route de la session (même chaîne de repli
-    que notre ancien code client, désormais supprimé). Leçon durable : tout
-    audit de scope doit vérifier la table ET les gardes dynamiques du
-    handler. Conséquence assumée du moindre privilège : un slash-command
-    d'administration tapé dans le chat est refusé. Le RPC `status` réservant
-    provider/modèle aux admins, la lecture passe par `sessions.list` +
-    `agents.list` (read) — vérifié en live.
+  - [x] Audit des scopes — épilogue du 2026-07-18 : `operator.admin` est
+    finalement CONSERVÉ, par choix produit documenté. L'épisode complet :
+    (1) l'audit initial (table core-descriptors) concluait que la route
+    d'origine explicite était en write — faux, le handler `chat.send` la
+    réserve à admin (« originating route fields require admin scope »,
+    constaté en prod) ; (2) le remplacement par `deliver:true` seul
+    fonctionnait… mais chaque message dashboard re-marquait la session
+    « webchat » et les réponses cessaient d'arriver sur WhatsApp (session
+    même recréée côté webchat après un reset). La route explicite épinglée
+    est donc indispensable à la continuité WhatsApp — c'est exactement ce
+    que le code d'origine faisait. Améliorations conservées : chaîne de
+    repli qui ignore les candidats webchat (une session polluée retrouve sa
+    vraie route via origin), deliver:true en dernier recours, lecture
+    provider/modèle via `sessions.list`+`agents.list`, et la leçon d'audit
+    (tables ET gardes de handler) gravée en mémoire.
 - [x] Ajouter un arrêt propre : stopper la gateway et les timers, terminer les
   flux SSE/WS et fermer SQLite sur `SIGTERM`/`SIGINT`.
 

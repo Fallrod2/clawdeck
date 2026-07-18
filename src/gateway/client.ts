@@ -18,14 +18,15 @@ const CLIENT_MODE = "backend";
 const CLIENT_PLATFORM = "web";
 const DEVICE_FAMILY = "clawdeck";
 const ROLE = "operator";
-// Scopes minimaux : chat.send avec deliver:true (route résolue par la
-// gateway) et chat.abort relèvent d'operator.write ; toutes nos autres
-// méthodes d'operator.read. ATTENTION : la table de scopes ne dit pas tout —
-// le handler chat.send réserve les champs originating* explicites et la
-// provenance système à operator.admin (constaté en prod le 2026-07-18).
-// Pas d'operator.admin (moindre privilège) : un slash-command d'administration
-// tapé dans le chat (ex. /config set) sera refusé par la gateway — voulu.
-const SCOPES = ["operator.read", "operator.write"];
+// operator.admin est un choix DÉLIBÉRÉ, pas un défaut : la continuité
+// WhatsApp exige la route d'origine explicite sur chat.send (champs
+// originating*, réservés admin par le handler), sans quoi chaque message
+// envoyé depuis le dashboard re-marque la session « webchat » et les
+// réponses de l'agent cessent d'arriver sur le téléphone (constaté en prod
+// le 2026-07-18 : session recréée côté webchat, route WhatsApp perdue).
+// Coût accepté sur un tailnet privé mono-utilisateur : un slash-command
+// d'administration tapé dans le chat (ex. /config set) sera exécutable.
+const SCOPES = ["operator.read", "operator.write", "operator.admin"];
 const RECONNECT_BASE_MS = 1000;
 const RECONNECT_MAX_MS = 30_000;
 // Délai maximal entre l'ouverture du socket et un connect-ok abouti. Sans ce
@@ -43,6 +44,15 @@ interface PendingRequest {
   resolve: (payload: unknown) => void;
   reject: (err: Error) => void;
   timer: ReturnType<typeof setTimeout>;
+}
+
+// Route de livraison de la session principale vers son canal d'origine
+// (ex. WhatsApp) : épinglée explicitement sur chaque chat.send pour que la
+// réponse reparte sur le téléphone ET que la session ne bascule pas webchat.
+interface DeliveryRoute {
+  channel: string;
+  to: string;
+  accountId?: string;
 }
 
 export interface GatewayLogTailResult {
@@ -92,6 +102,7 @@ export class GatewayClient extends EventEmitter {
   private lastEventSeq: number | null = null;
   // Clé de session dont l'abonnement aux messages a réussi (setupSession).
   private subscribedSessionKey: string | null = null;
+  private deliveryRoute: DeliveryRoute | null = null;
   // Agent par défaut (id + racine workspace), mis en cache par connexion —
   // consommé par l'onglet Fichiers (navigation gateway + upload local).
   private defaultAgentCache: { id: string; workspace: string | null } | null = null;
@@ -213,6 +224,7 @@ export class GatewayClient extends EventEmitter {
       this.authScopes = null;
       this.lastEventSeq = null;
       this.subscribedSessionKey = null;
+      this.deliveryRoute = null;
       this.defaultAgentCache = null;
       this.rejectAllPending(new Error("gateway connection closed"));
       if (wasConnected) this.emit("status", { connected: false });
@@ -450,12 +462,35 @@ export class GatewayClient extends EventEmitter {
     });
   }
 
-  // Après connexion : s'abonne au flux de messages de la session principale
-  // pour le miroir live. (La route de livraison n'est plus résolue ici : la
-  // gateway s'en charge côté serveur sur chat.send deliver:true.)
+  // Après connexion : résout la route de livraison de la session principale
+  // et s'abonne au flux de ses messages pour le miroir live.
   private async setupSession() {
     if (!this.mainSessionKey) return;
     const key = this.mainSessionKey;
+
+    if (this.supportsMethod("sessions.list")) {
+      try {
+        const list = (await this.request("sessions.list", {})) as { sessions?: any[] };
+        const entry = list.sessions?.find((s) => s.key === key);
+        // Premier candidat NON-webchat avec un destinataire : une session
+        // ayant temporairement basculé webchat (reset, message dashboard
+        // d'avant l'épinglage) garde ainsi sa route réelle si un candidat
+        // plus ancien la porte encore.
+        const candidates = [
+          entry?.deliveryContext,
+          { channel: entry?.lastChannel, to: entry?.lastTo, accountId: entry?.lastAccountId },
+          { channel: entry?.origin?.provider, to: entry?.origin?.to, accountId: entry?.origin?.accountId },
+        ];
+        for (const c of candidates) {
+          if (c?.channel && c.channel !== "webchat" && c.to) {
+            this.deliveryRoute = { channel: c.channel, to: c.to, accountId: c.accountId ?? undefined };
+            break;
+          }
+        }
+      } catch {
+        // pas de route connue : deliver:true laissera la gateway décider
+      }
+    }
 
     if (!this.supportsMethod("sessions.messages.subscribe")) return;
     try {
@@ -596,19 +631,25 @@ export class GatewayClient extends EventEmitter {
 
   async sendChatMessage(text: string): Promise<{ runId: string; status: string }> {
     if (!this.mainSessionKey) throw new Error("no active session");
-    // deliver seul (operator.write) : la gateway résout ELLE-MÊME la route
-    // d'origine de la session (deliveryContext → lastChannel → origin) et la
-    // réponse repart sur le canal réel (ex. WhatsApp) ; repli interne si la
-    // session n'a pas de route externe. Les champs originating* explicites
-    // sont volontairement absents : le handler chat.send les réserve à
-    // operator.admin (« originating route fields require admin scope »),
-    // vérifié dans les sources ET constaté en production le 2026-07-18 —
-    // le garde vit dans le handler, pas dans la table de scopes.
+    // Route d'origine explicite (originating*, operator.admin — voir SCOPES) :
+    // la réponse repart sur le canal réel (ex. WhatsApp) ET la session ne
+    // bascule pas « webchat » sous les messages du dashboard. Sans route
+    // connue (session née côté webchat), deliver:true laisse la gateway
+    // résoudre — elle retombera en interne, et la route se ré-épinglera au
+    // prochain message WhatsApp entrant.
+    const route = this.deliveryRoute;
     return this.request("chat.send", {
       sessionKey: this.mainSessionKey,
       message: text,
       idempotencyKey: crypto.randomUUID(),
       deliver: true,
+      ...(route
+        ? {
+            originatingChannel: route.channel,
+            originatingTo: route.to,
+            ...(route.accountId ? { originatingAccountId: route.accountId } : {}),
+          }
+        : {}),
     });
   }
 
