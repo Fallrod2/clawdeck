@@ -204,13 +204,12 @@ describe("GatewayClient — négociation hello-ok", () => {
     );
     expect(client.supportsMethod("sessions.messages.subscribe")).toBe(false);
 
-    // setupSession interroge sessions.list puis DOIT s'arrêter là.
-    await waitFor(() => socket.sentFrames().some((f) => f.method === "sessions.list"));
-    const listReq = socket.sentFrames().find((f) => f.method === "sessions.list")!;
-    socket.receive({ type: "res", id: listReq.id, ok: true, payload: { sessions: [{ key: "main" }] } });
+    // setupSession ne doit émettre AUCUN abonnement quand la méthode n'est
+    // pas annoncée (et il n'interroge plus sessions.list : la route de
+    // livraison est résolue côté gateway sur chat.send deliver:true).
     await Bun.sleep(20);
-
     expect(socket.sentFrames().some((f) => f.method === "sessions.messages.subscribe")).toBe(false);
+    expect(socket.sentFrames().some((f) => f.method === "sessions.list")).toBe(false);
     client.stop();
   });
 });
@@ -369,6 +368,34 @@ describe("GatewayClient — suivi de seq", () => {
   });
 });
 
+describe("GatewayClient — sendChatMessage", () => {
+  test("deliver:true sans AUCUN champ originating* (réservés operator.admin)", async () => {
+    const { client, sockets } = createClient();
+    client.start();
+    const socket = sockets[0]!;
+    performHandshake(socket);
+
+    const promise = client.sendChatMessage("bonjour");
+    const frame = socket.sentFrames().find((f) => f.method === "chat.send");
+    expect(frame).toBeDefined();
+    const params = frame!.params as Record<string, unknown>;
+    expect(params.sessionKey).toBe("main");
+    expect(params.message).toBe("bonjour");
+    expect(params.deliver).toBe(true);
+    expect(typeof params.idempotencyKey).toBe("string");
+    // Régression du 2026-07-18 : la gateway rejette ces champs hors admin
+    // (« originating route fields require admin scope »).
+    expect(params).not.toHaveProperty("originatingChannel");
+    expect(params).not.toHaveProperty("originatingTo");
+    expect(params).not.toHaveProperty("originatingAccountId");
+
+    socket.receive({ type: "res", id: frame!.id, ok: true, payload: { runId: "r1", status: "queued" } });
+    await expect(promise).resolves.toEqual({ runId: "r1", status: "queued" });
+
+    client.stop();
+  });
+});
+
 describe("GatewayClient — abortRun", () => {
   test("après handshake : frame chat.abort avec la clé de session et le runId", async () => {
     const { client, sockets } = createClient();
@@ -415,15 +442,7 @@ describe("GatewayClient — stop()", () => {
     const socket = sockets[0]!;
     performHandshake(socket);
 
-    // setupSession : sessions.list puis subscribe, tous deux acquittés.
-    await waitFor(() => socket.sentFrames().some((f) => f.method === "sessions.list"));
-    const listReq = socket.sentFrames().find((f) => f.method === "sessions.list")!;
-    socket.receive({
-      type: "res",
-      id: listReq.id,
-      ok: true,
-      payload: { sessions: [{ key: "main", deliveryContext: { channel: "whatsapp", to: "+33600000000" } }] },
-    });
+    // setupSession : abonnement au miroir de session, acquitté.
     await waitFor(() => socket.sentFrames().some((f) => f.method === "sessions.messages.subscribe"));
     const subReq = socket.sentFrames().find((f) => f.method === "sessions.messages.subscribe")!;
     socket.receive({ type: "res", id: subReq.id, ok: true, payload: {} });

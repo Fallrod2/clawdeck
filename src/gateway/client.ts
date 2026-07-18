@@ -18,9 +18,11 @@ const CLIENT_MODE = "backend";
 const CLIENT_PLATFORM = "web";
 const DEVICE_FAMILY = "clawdeck";
 const ROLE = "operator";
-// Scopes vérifiés contre les core-descriptors de la gateway installée :
-// chat.send — y compris deliver + route d'origine explicite — et chat.abort
-// relèvent d'operator.write ; toutes nos autres méthodes d'operator.read.
+// Scopes minimaux : chat.send avec deliver:true (route résolue par la
+// gateway) et chat.abort relèvent d'operator.write ; toutes nos autres
+// méthodes d'operator.read. ATTENTION : la table de scopes ne dit pas tout —
+// le handler chat.send réserve les champs originating* explicites et la
+// provenance système à operator.admin (constaté en prod le 2026-07-18).
 // Pas d'operator.admin (moindre privilège) : un slash-command d'administration
 // tapé dans le chat (ex. /config set) sera refusé par la gateway — voulu.
 const SCOPES = ["operator.read", "operator.write"];
@@ -51,15 +53,6 @@ export interface GatewayLogTailResult {
   reset: boolean;
 }
 
-// Route de livraison d'une session vers son canal d'origine (ex. WhatsApp),
-// extraite de sessions.list — permet de renvoyer la réponse de l'agent là où
-// la conversation a lieu réellement.
-interface DeliveryRoute {
-  channel: string;
-  to: string;
-  accountId?: string;
-}
-
 // Points d'injection réservés aux tests (socket factice, watchdog court) ;
 // en production les valeurs par défaut s'appliquent.
 export interface GatewayClientOptions {
@@ -87,7 +80,6 @@ export class GatewayClient extends EventEmitter {
   // prochaine tentative ; consommé par scheduleReconnect sans toucher au
   // backoff exponentiel.
   private nextReconnectDelayMs: number | null = null;
-  private deliveryRoute: DeliveryRoute | null = null;
   private serverVersion: string | null = null;
   private serverUptimeMs: number | null = null;
   // État négocié dans hello-ok, valable pour la connexion courante seulement.
@@ -213,7 +205,6 @@ export class GatewayClient extends EventEmitter {
       const wasConnected = this.connected;
       this.connected = false;
       this.mainSessionKey = null;
-      this.deliveryRoute = null;
       this.serverVersion = null;
       this.serverUptimeMs = null;
       this.negotiatedProtocolVersion = null;
@@ -459,30 +450,12 @@ export class GatewayClient extends EventEmitter {
     });
   }
 
-  // Après connexion : récupère la route de livraison de la session principale
-  // (canal d'origine, ex. WhatsApp) et s'abonne au flux de ses messages pour
-  // le miroir live.
+  // Après connexion : s'abonne au flux de messages de la session principale
+  // pour le miroir live. (La route de livraison n'est plus résolue ici : la
+  // gateway s'en charge côté serveur sur chat.send deliver:true.)
   private async setupSession() {
     if (!this.mainSessionKey) return;
     const key = this.mainSessionKey;
-
-    // Chaque étape est gatée sur la découverte : une méthode non annoncée
-    // n'est jamais appelée (request la refuserait de toute façon).
-    if (this.supportsMethod("sessions.list")) {
-      try {
-        const list = (await this.request("sessions.list", {})) as { sessions?: any[] };
-        const entry = list.sessions?.find((s) => s.key === key);
-        const ctx = entry?.deliveryContext;
-        const channel = ctx?.channel ?? entry?.lastChannel ?? entry?.origin?.provider;
-        const to = ctx?.to ?? entry?.lastTo ?? entry?.origin?.to;
-        const accountId = ctx?.accountId ?? entry?.lastAccountId ?? entry?.origin?.accountId;
-        if (channel && channel !== "webchat" && to) {
-          this.deliveryRoute = { channel, to, accountId };
-        }
-      } catch {
-        // pas de route : envoi interne seulement
-      }
-    }
 
     if (!this.supportsMethod("sessions.messages.subscribe")) return;
     try {
@@ -623,22 +596,19 @@ export class GatewayClient extends EventEmitter {
 
   async sendChatMessage(text: string): Promise<{ runId: string; status: string }> {
     if (!this.mainSessionKey) throw new Error("no active session");
-    // deliver + route d'origine explicite : la réponse de l'agent repart sur
-    // le canal réel de la session (ex. WhatsApp), pas seulement en RPC. Sans
-    // route connue, envoi interne classique.
-    const route = this.deliveryRoute;
+    // deliver seul (operator.write) : la gateway résout ELLE-MÊME la route
+    // d'origine de la session (deliveryContext → lastChannel → origin) et la
+    // réponse repart sur le canal réel (ex. WhatsApp) ; repli interne si la
+    // session n'a pas de route externe. Les champs originating* explicites
+    // sont volontairement absents : le handler chat.send les réserve à
+    // operator.admin (« originating route fields require admin scope »),
+    // vérifié dans les sources ET constaté en production le 2026-07-18 —
+    // le garde vit dans le handler, pas dans la table de scopes.
     return this.request("chat.send", {
       sessionKey: this.mainSessionKey,
       message: text,
       idempotencyKey: crypto.randomUUID(),
-      ...(route
-        ? {
-            deliver: true,
-            originatingChannel: route.channel,
-            originatingTo: route.to,
-            ...(route.accountId ? { originatingAccountId: route.accountId } : {}),
-          }
-        : {}),
+      deliver: true,
     });
   }
 

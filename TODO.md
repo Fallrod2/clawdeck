@@ -121,14 +121,18 @@ chat ne sont pas fiables tant qu'elles ne sont pas terminées.
   - [x] Remise à zéro de la route de livraison et de tout l'état négocié à la
     déconnexion ; désabonnement `sessions.messages.unsubscribe` best-effort à
     l'arrêt.
-  - [x] Audit des scopes tranché par les sources de la gateway
-    (core-descriptors) : `chat.send` + route d'origine = `operator.write`,
-    tout le reste = `operator.read` → `operator.admin` retiré. Conséquence
-    assumée : un slash-command d'administration tapé dans le chat est refusé
-    par la gateway (moindre privilège). Le RPC `status` réservant le détail
-    provider/modèle aux clients admin, la lecture bascule sur
-    `sessions.list` + `agents.list` (read) — vérifié en live : provider et
-    modèle actifs de nouveau remontés avec les scopes réduits.
+  - [x] Audit des scopes : `operator.admin` retiré, tout fonctionne en
+    read/write. Correction du 2026-07-18 après constat en prod : la table de
+    scopes ne dit pas tout — le handler `chat.send` réserve les champs
+    `originating*` explicites à admin (« originating route fields require
+    admin scope »). Réglé proprement : `deliver: true` seul (write), la
+    gateway résout elle-même la route de la session (même chaîne de repli
+    que notre ancien code client, désormais supprimé). Leçon durable : tout
+    audit de scope doit vérifier la table ET les gardes dynamiques du
+    handler. Conséquence assumée du moindre privilège : un slash-command
+    d'administration tapé dans le chat est refusé. Le RPC `status` réservant
+    provider/modèle aux admins, la lecture passe par `sessions.list` +
+    `agents.list` (read) — vérifié en live.
 - [x] Ajouter un arrêt propre : stopper la gateway et les timers, terminer les
   flux SSE/WS et fermer SQLite sur `SIGTERM`/`SIGINT`.
 
