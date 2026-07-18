@@ -219,6 +219,20 @@ chat ne sont pas fiables tant qu'elles ne sont pas terminées.
 - [ ] Après stabilisation de la session principale, décider si un sélecteur de
   sessions est utile. Ne pas ajouter de copie locale de leur historique.
 
+## Fait hors roadmap — onglet Fichiers (2026-07-18)
+
+- [x] Consultation du workspace de l'agent : navigation par dossiers, fil
+  d'Ariane, préviz texte/images, via `agents.workspace.list/get`
+  (operator.read, confinement et redaction côté gateway), `.git` filtré.
+- [x] Ajout de fichiers (téléversement ≤ 10 Mo + création de fichier texte)
+  par écriture directe confinée (`src/workspace.ts`, 9 tests paranoïaques :
+  traversées, symlink d'évasion, `.git`, écrasement contrôlé) —
+  `agents.files.set` aurait exigé `operator.admin` qu'on ne demande pas.
+- [x] Routes `GET /api/workspace`, `GET /api/workspace/file`,
+  `POST /api/workspace/files` (400/404/409/413/502/503 typées), vérifiées en
+  live contre la gateway réelle. Pas de suppression/renommage (destructif —
+  décision explicite à prendre plus tard si le besoin émerge).
+
 ## P3 — Notifications dashboard + ntfy
 
 - [ ] Spécifier `POST /api/notify` : payload versionné (`title`, `message`,
@@ -275,9 +289,8 @@ Chacune tient en quelques lignes ; à grouper dans un même lot de nettoyage.
 - [x] `web` : `tailwindcss`/`@tailwindcss/vite` déplacés en `devDependencies` ;
   `remark-gfm` ajouté à `react-markdown` (tableaux, listes de tâches, barré —
   toujours sans `rehype-raw`, HTML échappé) — fait le 2026-07-18.
-- [ ] `App.tsx` : supprimer la variante `xs:` inexistante et dédoublonner les
-  `aria-label` des deux `nav` (le `refresh` inutilisé a été retiré avec la
-  refonte de `usePingHistory`).
+- [x] `App.tsx` : variante `xs:` supprimée, `aria-label` des deux `nav`
+  dédoublonnés, `refresh` inutilisé retiré (fait le 2026-07-18).
 - [x] `ChatPanel.tsx` : `prefers-reduced-motion` respecté pour le `scrollTo`
   (fait le 2026-07-18).
 - [x] `LogsPanel.tsx` : `aria-hidden` sur le point décoratif, « tail tronqué »

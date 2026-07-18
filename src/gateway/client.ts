@@ -100,6 +100,9 @@ export class GatewayClient extends EventEmitter {
   private lastEventSeq: number | null = null;
   // Clé de session dont l'abonnement aux messages a réussi (setupSession).
   private subscribedSessionKey: string | null = null;
+  // Agent par défaut (id + racine workspace), mis en cache par connexion —
+  // consommé par l'onglet Fichiers (navigation gateway + upload local).
+  private defaultAgentCache: { id: string; workspace: string | null } | null = null;
   mainSessionKey: string | null = null;
   private readonly socketFactory: (url: string) => WebSocket;
   private readonly handshakeTimeoutMs: number;
@@ -219,6 +222,7 @@ export class GatewayClient extends EventEmitter {
       this.authScopes = null;
       this.lastEventSeq = null;
       this.subscribedSessionKey = null;
+      this.defaultAgentCache = null;
       this.rejectAllPending(new Error("gateway connection closed"));
       if (wasConnected) this.emit("status", { connected: false });
       if (!this.closedByUs && !this.reconnectSuspended) this.scheduleReconnect();
@@ -556,6 +560,45 @@ export class GatewayClient extends EventEmitter {
   // l'agent par défaut, pour distinguer modèle actif et modèle configuré.
   getAgentsSummary(): Promise<unknown> {
     return this.request("agents.list", {}, 8_000);
+  }
+
+  // Agent par défaut (première ligne d'agents.list) : id et racine du
+  // workspace sur le disque. Sondé en live : { id: "main",
+  // workspace: "/Users/claw/.openclaw/workspace", ... }.
+  async getDefaultAgent(): Promise<{ id: string; workspace: string | null } | null> {
+    if (this.defaultAgentCache) return this.defaultAgentCache;
+    const payload = await this.getAgentsSummary();
+    const rows = Array.isArray(payload)
+      ? payload
+      : Array.isArray((payload as { agents?: unknown[] } | null)?.agents)
+        ? (payload as { agents: unknown[] }).agents
+        : [];
+    const first = rows[0] as { id?: unknown; workspace?: unknown } | undefined;
+    if (!first || typeof first.id !== "string" || !first.id) return null;
+    const workspace =
+      typeof first.workspace === "string" && first.workspace.trim() ? first.workspace : null;
+    this.defaultAgentCache = { id: first.id, workspace };
+    return this.defaultAgentCache;
+  }
+
+  // Listing du workspace de l'agent par défaut (chemins RELATIFS ; la racine
+  // n'est jamais exposée par ce RPC — confinement fait côté gateway).
+  async getWorkspaceListing(path?: string): Promise<unknown> {
+    const agent = await this.getDefaultAgent();
+    if (!agent) throw new Error("agent par défaut introuvable");
+    return this.request(
+      "agents.workspace.list",
+      { agentId: agent.id, ...(path ? { path } : {}) },
+      8_000,
+    );
+  }
+
+  // Contenu d'un fichier du workspace : { file: { path, name, size,
+  // updatedAtMs, mimeType, encoding: "utf8"|"base64", content } }.
+  async getWorkspaceFile(path: string): Promise<unknown> {
+    const agent = await this.getDefaultAgent();
+    if (!agent) throw new Error("agent par défaut introuvable");
+    return this.request("agents.workspace.get", { agentId: agent.id, path }, 8_000);
   }
 
   getWhatsAppStatus(): Promise<unknown> {

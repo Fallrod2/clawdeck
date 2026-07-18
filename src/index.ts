@@ -13,6 +13,7 @@ import { collectStatus, type StatusPayload } from "./status";
 import { StatusCollector } from "./status-collector";
 import { LogTailer } from "./log-tailer";
 import { normalizeLogTail, type DashboardLogEntry } from "./logs";
+import { saveWorkspaceFile, WorkspaceWriteError } from "./workspace";
 import {
   readOpenClawRuntime,
   unavailableOpenClawRuntime,
@@ -352,6 +353,108 @@ app.get(
     };
   }),
 );
+
+// --- Fichiers : workspace de l'agent OpenClaw ---
+// Lecture via la gateway (agents.workspace.*, operator.read, confinement et
+// redaction côté serveur) ; écriture directe confinée sur le disque (voir
+// src/workspace.ts — agents.files.set exigerait operator.admin).
+
+app.get("/api/workspace", async (c) => {
+  if (!gateway.isConnected) {
+    return c.json({ error: "gateway déconnectée" }, 503);
+  }
+  const path = c.req.query("path") || undefined;
+  try {
+    const listing = (await gateway.getWorkspaceListing(path)) as {
+      path?: unknown;
+      entries?: unknown[];
+      totalEntries?: unknown;
+    } | null;
+    const entries = Array.isArray(listing?.entries)
+      ? listing.entries.filter((e) => (e as { name?: unknown } | null)?.name !== ".git")
+      : [];
+    return c.json({
+      path: typeof listing?.path === "string" ? listing.path : (path ?? ""),
+      entries,
+      totalEntries: typeof listing?.totalEntries === "number" ? listing.totalEntries : entries.length,
+    });
+  } catch (err) {
+    return c.json({ error: (err as Error).message }, 502);
+  }
+});
+
+app.get("/api/workspace/file", async (c) => {
+  if (!gateway.isConnected) {
+    return c.json({ error: "gateway déconnectée" }, 503);
+  }
+  const path = c.req.query("path");
+  if (!path) return c.json({ error: "path requis" }, 400);
+  try {
+    const got = (await gateway.getWorkspaceFile(path)) as { file?: unknown } | null;
+    if (!got?.file) return c.json({ error: "fichier introuvable" }, 404);
+    return c.json({ file: got.file });
+  } catch (err) {
+    const message = (err as Error).message;
+    const status = /not found|introuvable|no such/i.test(message) ? 404 : 502;
+    return c.json({ error: message }, status);
+  }
+});
+
+// Borne brute du body : 10 Mo utiles ≈ 13,4 Mo en base64 + enveloppe JSON.
+const MAX_UPLOAD_BODY_BYTES = 15 * 1024 * 1024;
+
+app.post("/api/workspace/files", async (c) => {
+  const rawLength = Number(c.req.header("content-length") ?? 0);
+  if (rawLength > MAX_UPLOAD_BODY_BYTES) {
+    return c.json({ error: "corps de requête trop volumineux" }, 413);
+  }
+  let body: { path?: unknown; contentBase64?: unknown; contentText?: unknown; overwrite?: unknown };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "JSON invalide" }, 400);
+  }
+  const relPath = typeof body.path === "string" ? body.path : "";
+  const hasBase64 = typeof body.contentBase64 === "string";
+  const hasText = typeof body.contentText === "string";
+  if (!relPath || hasBase64 === hasText) {
+    return c.json({ error: "path et UN contenu (contentBase64 OU contentText) requis" }, 400);
+  }
+
+  let data: Uint8Array;
+  if (hasBase64) {
+    try {
+      data = Uint8Array.from(Buffer.from(body.contentBase64 as string, "base64"));
+    } catch {
+      return c.json({ error: "base64 invalide" }, 400);
+    }
+  } else {
+    data = new TextEncoder().encode(body.contentText as string);
+  }
+
+  if (!gateway.isConnected) {
+    return c.json({ error: "gateway déconnectée — racine du workspace inconnue" }, 503);
+  }
+  const agent = await gateway.getDefaultAgent().catch(() => null);
+  if (!agent?.workspace) {
+    return c.json({ error: "workspace de l'agent introuvable" }, 503);
+  }
+
+  try {
+    const saved = await saveWorkspaceFile(agent.workspace, relPath, data, body.overwrite === true);
+    return c.json({ created: true, ...saved });
+  } catch (err) {
+    if (err instanceof WorkspaceWriteError) {
+      const status =
+        err.code === "invalid-path" ? 400
+        : err.code === "too-large" ? 413
+        : err.code === "exists" ? 409
+        : 503;
+      return c.json({ error: err.message, code: err.code }, status);
+    }
+    return c.json({ error: "écriture impossible" }, 500);
+  }
+});
 
 // Sert le front buildé (`bun run build`). En dev, Vite tourne à part (voir dev.ts)
 // et proxy /api vers ce backend.

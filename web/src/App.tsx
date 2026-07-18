@@ -6,6 +6,7 @@ import { StatusCard, type Tone } from "./components/StatusCard";
 import { LatencyChart } from "./components/LatencyChart";
 import { ChatPanel } from "./components/ChatPanel";
 import { LogsPanel } from "./components/LogsPanel";
+import { FilesPanel } from "./components/FilesPanel";
 import { useStatusStream } from "./hooks/useStatusStream";
 import { usePingHistory } from "./hooks/usePingHistory";
 import { useChat } from "./hooks/useChat";
@@ -22,6 +23,7 @@ const TABS = [
   { id: "health", label: "Vue d'ensemble" },
   { id: "chat", label: "Chat" },
   { id: "logs", label: "Logs" },
+  { id: "files", label: "Fichiers" },
 ] as const;
 type TabId = (typeof TABS)[number]["id"];
 
@@ -193,7 +195,7 @@ export default function App() {
                 className={`h-1.5 w-1.5 rounded-full ${streamGood ? "bg-emerald-400" : "bg-amber-400"}`}
                 aria-hidden
               />
-              <span className="hidden xs:inline sm:inline">{streamLabel}</span>
+              <span className="hidden sm:inline">{streamLabel}</span>
               <span className="sm:hidden">{streamGood ? "En direct" : "Hors ligne"}</span>
             </div>
             <button
@@ -209,7 +211,7 @@ export default function App() {
           </div>
         </div>
 
-        <nav className="mx-auto grid max-w-6xl grid-cols-3 gap-1 px-4 pb-3 sm:hidden" aria-label="Navigation principale">
+        <nav className="mx-auto grid max-w-6xl grid-cols-4 gap-1 px-4 pb-3 sm:hidden" aria-label="Navigation principale (mobile)">
           {TABS.map((item) => (
             <button
               key={item.id}
@@ -385,6 +387,19 @@ export default function App() {
             </p>
           </section>
           <LogsPanel token={token} />
+        </div>
+        <div hidden={tab !== "files"} inert={tab !== "files"} aria-hidden={tab !== "files"}>
+          <section className="mb-6">
+            <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-emerald-300/80">
+              Workspace de l'agent
+            </p>
+            <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">Fichiers OpenClaw</h1>
+            <p className="mt-2 max-w-xl text-sm leading-6 text-[var(--text-secondary)]">
+              Les fichiers auxquels l'agent a accès : lecture via la gateway, ajout depuis ce
+              dashboard directement dans son workspace.
+            </p>
+          </section>
+          <FilesPanel token={token} active={tab === "files"} />
         </div>
       </main>
     </div>
