@@ -164,14 +164,25 @@ export function useChat(token: string | null) {
         if (state === "delta") {
           return { ...msg, text, pending: true };
         }
+        // États terminaux : timestamp ramené à MAINTENANT, pas au début du
+        // streaming — la fenêtre anti-doublon de handleSessionMessage court
+        // depuis la fin de la réponse, sinon toute réponse ayant streamé
+        // plus de 30 s était dupliquée par son écho de session (constaté en
+        // prod le 2026-07-18).
         if (state === "final") {
-          return { ...msg, text, pending: false };
+          return { ...msg, text, pending: false, timestamp: Date.now() };
         }
         if (state === "aborted") {
-          return { ...msg, text, pending: false, error: "interrompu" };
+          return { ...msg, text, pending: false, timestamp: Date.now(), error: "interrompu" };
         }
         if (state === "error") {
-          return { ...msg, text, pending: false, error: asString(p.errorMessage) ?? "erreur" };
+          return {
+            ...msg,
+            text,
+            pending: false,
+            timestamp: Date.now(),
+            error: asString(p.errorMessage) ?? "erreur",
+          };
         }
         return msg;
       });

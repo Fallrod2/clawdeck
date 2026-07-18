@@ -435,6 +435,17 @@ describe("GatewayClient — sendChatMessage", () => {
     await answerSessionsList(socket, { key: "main", deliveryContext: { channel: "webchat" } });
 
     client.sendChatMessage("bonjour").catch(() => {});
+    // Route nulle : l'envoi re-tente une résolution (2e sessions.list) —
+    // toujours webchat, donc chat.send part avec deliver seul.
+    await waitFor(() => socket.sentFrames().filter((f) => f.method === "sessions.list").length >= 2);
+    const retryReq = socket.sentFrames().filter((f) => f.method === "sessions.list")[1]!;
+    socket.receive({
+      type: "res",
+      id: retryReq.id,
+      ok: true,
+      payload: { sessions: [{ key: "main", deliveryContext: { channel: "webchat" } }] },
+    });
+    await waitFor(() => socket.sentFrames().some((f) => f.method === "chat.send"));
     const frame = socket.sentFrames().find((f) => f.method === "chat.send")!;
     const params = frame.params as Record<string, unknown>;
     expect(params.deliver).toBe(true);

@@ -328,6 +328,18 @@ export class GatewayClient extends EventEmitter {
       this.emit("session-message", msg.payload);
       return;
     }
+    // Index de sessions modifié (reset, recréation…) : l'abonnement au
+    // miroir a pu mourir avec l'ancienne ligne de session, et la route de
+    // livraison changer. On invalide la route et on refait setupSession
+    // (le réabonnement est idempotent côté gateway).
+    if (msg.type === "event" && msg.event === "sessions.changed") {
+      this.deliveryRoute = null;
+      this.subscribedSessionKey = null;
+      this.setupSession().catch(() => {
+        // best-effort : retentera au prochain sessions.changed ou reconnect
+      });
+      return;
+    }
   }
 
   private sendConnect(nonce: string) {
@@ -468,29 +480,7 @@ export class GatewayClient extends EventEmitter {
     if (!this.mainSessionKey) return;
     const key = this.mainSessionKey;
 
-    if (this.supportsMethod("sessions.list")) {
-      try {
-        const list = (await this.request("sessions.list", {})) as { sessions?: any[] };
-        const entry = list.sessions?.find((s) => s.key === key);
-        // Premier candidat NON-webchat avec un destinataire : une session
-        // ayant temporairement basculé webchat (reset, message dashboard
-        // d'avant l'épinglage) garde ainsi sa route réelle si un candidat
-        // plus ancien la porte encore.
-        const candidates = [
-          entry?.deliveryContext,
-          { channel: entry?.lastChannel, to: entry?.lastTo, accountId: entry?.lastAccountId },
-          { channel: entry?.origin?.provider, to: entry?.origin?.to, accountId: entry?.origin?.accountId },
-        ];
-        for (const c of candidates) {
-          if (c?.channel && c.channel !== "webchat" && c.to) {
-            this.deliveryRoute = { channel: c.channel, to: c.to, accountId: c.accountId ?? undefined };
-            break;
-          }
-        }
-      } catch {
-        // pas de route connue : deliver:true laissera la gateway décider
-      }
-    }
+    await this.resolveDeliveryRoute();
 
     if (!this.supportsMethod("sessions.messages.subscribe")) return;
     try {
@@ -499,6 +489,34 @@ export class GatewayClient extends EventEmitter {
       this.subscribedSessionKey = key;
     } catch {
       // le miroir live sera indisponible mais le chat direct fonctionne
+    }
+  }
+
+  // Résout la route de livraison depuis sessions.list. Premier candidat
+  // NON-webchat avec un destinataire : une session ayant temporairement
+  // basculé webchat (reset, message dashboard d'avant l'épinglage) retrouve
+  // ainsi sa route réelle si un candidat plus ancien la porte encore.
+  // Rappelée paresseusement tant que la route est inconnue : un « ping »
+  // WhatsApp envoyé APRÈS notre connexion ré-ensemence la session côté
+  // gateway, et le prochain envoi dashboard la récupère ici.
+  private async resolveDeliveryRoute(): Promise<void> {
+    if (!this.mainSessionKey || !this.supportsMethod("sessions.list")) return;
+    try {
+      const list = (await this.request("sessions.list", {})) as { sessions?: any[] };
+      const entry = list.sessions?.find((s) => s.key === this.mainSessionKey);
+      const candidates = [
+        entry?.deliveryContext,
+        { channel: entry?.lastChannel, to: entry?.lastTo, accountId: entry?.lastAccountId },
+        { channel: entry?.origin?.provider, to: entry?.origin?.to, accountId: entry?.origin?.accountId },
+      ];
+      for (const c of candidates) {
+        if (c?.channel && c.channel !== "webchat" && c.to) {
+          this.deliveryRoute = { channel: c.channel, to: c.to, accountId: c.accountId ?? undefined };
+          break;
+        }
+      }
+    } catch {
+      // pas de route connue : deliver:true laissera la gateway décider
     }
   }
 
@@ -637,6 +655,9 @@ export class GatewayClient extends EventEmitter {
     // connue (session née côté webchat), deliver:true laisse la gateway
     // résoudre — elle retombera en interne, et la route se ré-épinglera au
     // prochain message WhatsApp entrant.
+    // Route inconnue (session née webchat, ou « ping » WhatsApp arrivé après
+    // notre connexion) : nouvelle tentative de résolution avant l'envoi.
+    if (!this.deliveryRoute) await this.resolveDeliveryRoute();
     const route = this.deliveryRoute;
     return this.request("chat.send", {
       sessionKey: this.mainSessionKey,
