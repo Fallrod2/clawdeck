@@ -394,7 +394,7 @@ export default function App() {
               Événements récents de la gateway, filtrés à la source et conservés uniquement dans cette vue.
             </p>
           </section>
-          <LogsPanel token={token} />
+          <LogsPanel token={token} active={tab === "logs"} />
         </div>
         <div hidden={tab !== "files"} inert={tab !== "files"} aria-hidden={tab !== "files"}>
           <section className="mb-6">

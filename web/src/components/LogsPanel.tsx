@@ -35,7 +35,7 @@ function formatTime(timestamp: string | null): string {
   });
 }
 
-export function LogsPanel({ token }: { token: string | null }) {
+export function LogsPanel({ token, active }: { token: string | null; active: boolean }) {
   const [paused, setPaused] = useState(false);
   const [filter, setFilter] = useState<LevelFilter>("all");
   const [query, setQuery] = useState("");
@@ -52,11 +52,15 @@ export function LogsPanel({ token }: { token: string | null }) {
     });
   }, [entries, filter, query]);
 
+  // Le panneau reste monté quand l'onglet change (voir App.tsx) : masqué, sa
+  // hauteur est nulle et tout scroll est perdu. On re-suit donc le bas à la
+  // réactivation, sinon revenir sur l'onglet affichait les lignes les plus
+  // ANCIENNES jusqu'à la prochaine arrivée — même garde que ChatPanel.
   useEffect(() => {
-    if (!followRef.current) return;
+    if (!active || !followRef.current) return;
     const viewport = viewportRef.current;
     viewport?.scrollTo({ top: viewport.scrollHeight });
-  }, [visibleEntries]);
+  }, [visibleEntries, active]);
 
   const connected = state === "open";
   const authRequired = state === "auth";
