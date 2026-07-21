@@ -19,8 +19,8 @@ Les règles visuelles et d'interaction sont dans `docs/UI_UX.md`.
 
 Phase 1 (health panel) et phase 2 (chat) en place :
 - Statut HTTP + RPC de la gateway OpenClaw, provider/modèle réellement actif,
-  état WhatsApp, Ollama et son modèle de fallback, pings vers Cloudflare et la
-  passerelle réseau, graphe de latence 24h/7j.
+  état WhatsApp, Ollama et son modèle de fallback, pings vers Cloudflare, la
+  passerelle réseau et un site distant (83.204.110.38), graphe de latence 24h/7j.
 - Tail SSE des logs OpenClaw via `logs.tail`, filtré par la gateway, borné en
   mémoire et jamais persisté par clawdeck.
 - Chat riche : le backend maintient une connexion WS authentifiée par
