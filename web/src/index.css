@@ -28,6 +28,7 @@
   --status-unknown: #7c8582;
   --chart-internet: #79a8ff;
   --chart-local: #65d6bd;
+  --chart-remote: #b48cf2;
 }
 
 html {

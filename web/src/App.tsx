@@ -86,7 +86,7 @@ export default function App() {
         label: "Données périmées — l'état affiché date de la dernière mesure reçue",
       };
     }
-    const checks = [status.gateway.ok, status.ollama.ok, status.ping.cloudflare.ok, status.ping.orange.ok];
+    const checks = [status.gateway.ok, status.ollama.ok, status.ping.cloudflare.ok, status.ping.orange.ok, status.ping.remote.ok];
     if (status.openclaw) checks.push(status.openclaw.connected && status.openclaw.healthy !== false);
     if (status.openclaw?.whatsapp.healthy !== null && status.openclaw?.whatsapp.healthy !== undefined) {
       checks.push(status.openclaw.whatsapp.healthy);
@@ -327,13 +327,21 @@ export default function App() {
                 latencyMs={status?.ping.orange.latencyMs}
                 detail={status?.ping.orange.host || "Réseau local"}
               />
+              <StatusCard
+                title="Site distant"
+                code="RMT"
+                staleTone={dataStale}
+                tone={toneForCheck(status?.ping.remote)}
+                latencyMs={status?.ping.remote.latencyMs}
+                detail={status?.ping.remote.host || "83.204.110.38"}
+              />
             </section>
 
             <section className="mt-4 overflow-hidden rounded-xl border border-white/8 bg-[var(--surface-panel)]">
               <div className="flex flex-col gap-3 border-b border-white/7 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-5">
                 <div>
                   <h2 className="text-sm font-medium">Latence réseau</h2>
-                  <p className="mt-1 text-xs text-[var(--text-muted)]">Internet et passerelle locale, agrégés sur la période.</p>
+                  <p className="mt-1 text-xs text-[var(--text-muted)]">Internet, passerelle locale et site distant, agrégés sur la période.</p>
                 </div>
                 <div className="flex w-fit gap-1 rounded-lg border border-white/8 bg-black/15 p-1" aria-label="Période du graphique">
                   {RANGES.map((range) => (

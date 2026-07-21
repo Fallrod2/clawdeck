@@ -1,24 +1,25 @@
 // src/components/LatencyChart.tsx — graphe de latence (Cloudflare / passerelle
-// Orange). Un seul axe (ms), deux séries, lecture détaillée au survol et au
-// clavier. Honnêteté d'abord (UI_UX §5) : les trous de collecte ne sont jamais
-// reliés, les stats de période servent de conclusion textuelle et l'âge des
-// données est annoncé quand le rafraîchissement ne répond plus.
+// Orange / site distant). Un seul axe (ms), trois séries, lecture détaillée au
+// survol et au clavier. Honnêteté d'abord (UI_UX §5) : les trous de collecte
+// ne sont jamais reliés, les stats de période servent de conclusion textuelle
+// et l'âge des données est annoncé quand le rafraîchissement ne répond plus.
 
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
 import type { PingHistory, PingRow } from "../lib/types";
 import { formatRelativeAgeFr, useNow } from "../hooks/useNow";
 
 interface Series {
-  key: "cloudflare" | "orange";
+  key: "cloudflare" | "orange" | "remote";
   label: string;
   color: string;
   points: PingRow[];
 }
 
-// Slots catégoriels 1 et 2 de la palette validée (variante sombre).
+// Slots catégoriels 1, 2 et 3 de la palette validée (variante sombre).
 const SERIES_STYLE: Record<Series["key"], { label: string; color: string }> = {
   cloudflare: { label: "Internet · 1.1.1.1", color: "var(--chart-internet)" },
   orange: { label: "Passerelle locale", color: "var(--chart-local)" },
+  remote: { label: "Site distant", color: "var(--chart-remote)" },
 };
 
 const DEFAULT_WIDTH = 800;
@@ -126,6 +127,7 @@ export function LatencyChart({
     () => [
       { key: "cloudflare", points: history?.cloudflare ?? [], ...SERIES_STYLE.cloudflare },
       { key: "orange", points: history?.orange ?? [], ...SERIES_STYLE.orange },
+      { key: "remote", points: history?.remote ?? [], ...SERIES_STYLE.remote },
     ],
     [history],
   );
@@ -308,7 +310,7 @@ export function LatencyChart({
             role="img"
             aria-labelledby="latency-chart-title latency-chart-description"
           >
-            <title id="latency-chart-title">Latence Internet et réseau local</title>
+            <title id="latency-chart-title">Latence Internet, réseau local et site distant</title>
             <desc id="latency-chart-description">{descText}</desc>
             {scales.yTicks.map((t) => (
               <g key={t}>

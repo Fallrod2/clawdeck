@@ -183,6 +183,7 @@ app.get("/api/pings/history", (c) => {
     bucketMs,
     cloudflare: getPingHistoryBucketed("cloudflare", since, bucketMs),
     orange: getPingHistoryBucketed("orange", since, bucketMs),
+    remote: getPingHistoryBucketed("remote", since, bucketMs),
   });
 });
 

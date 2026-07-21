@@ -51,6 +51,7 @@ export interface StatusPayload {
   ping: {
     cloudflare: PingCheck;
     orange: PingCheck;
+    remote: PingCheck;
   };
 }
 
@@ -64,4 +65,5 @@ export interface PingHistory {
   bucketMs: number;
   cloudflare: PingRow[];
   orange: PingRow[];
+  remote: PingRow[];
 }
