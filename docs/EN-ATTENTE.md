@@ -78,6 +78,18 @@ Bloquée sur le contexte sécurisé (voir HTTPS ci-dessus) : Web Push exige HTTP
 et un service worker. **À privilégier sur ntfy le jour où HTTPS est en place** —
 une dépendance externe de moins.
 
+### Reprise des logs par curseur (`Last-Event-ID`)
+
+L'idée était de ne rien perdre entre deux connexions SSE. **L'architecture la
+rend sans objet** : `LogTailer` ne tourne QUE tant qu'un client écoute
+(`pause()` dès le dernier désabonnement) et repart avec un curseur vide. Quand
+plus personne ne regarde, rien n'est collecté — il n'y a donc rien à rejouer,
+et un tampon de reprise serait systématiquement vide au moment où il servirait.
+
+Changer cela signifierait faire tourner le tail en permanence et conserver un
+historique en mémoire : c'est-à-dire transformer une vue en direct en journal,
+ce que le produit refuse. Les logs complets vivent chez OpenClaw.
+
 ### Coloration syntaxique des blocs de code
 
 Se recalculerait à chaque delta de streaming, pour un gain que le soin apporté

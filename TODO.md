@@ -64,8 +64,6 @@ supervision, chat riche, notifications.
 - [ ] Résumé d'usage et de quota via les RPC `usage.status` / `usage.cost`,
   sans nouvelle persistance. À conditionner à `supportsMethod` : ces méthodes
   ne sont pas annoncées par toutes les versions de gateway.
-- [ ] Reprise des logs par curseur (`Last-Event-ID`) pour ne rien perdre entre
-  deux connexions SSE.
 
 ## Tests et exploitation
 
