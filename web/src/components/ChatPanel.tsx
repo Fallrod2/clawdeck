@@ -32,6 +32,7 @@ import {
 } from "../lib/chatTypes";
 import type { ChatController } from "../hooks/useChat";
 import { buildTimeline, formatDayLabel, type MessageGroup } from "../lib/timeline";
+import { ChatSearch, type ChatSearchHighlight } from "./ChatSearch";
 
 const REMARK_PLUGINS = [remarkGfm];
 
@@ -343,11 +344,14 @@ function GroupBlock({
   onRetry,
   retryDisabled,
   animate,
+  highlightedId,
 }: {
   group: MessageGroup;
   onRetry: (clientMessageId: string) => void;
   retryDisabled: boolean;
   animate: boolean;
+  /** Message portant l'occurrence de recherche courante. */
+  highlightedId: string | null;
 }) {
   const isUser = group.role === "user";
   // Le rail de l'agent porte l'état de sa réponse : c'est lui qui signale un
@@ -369,13 +373,24 @@ function GroupBlock({
         {!isUser && <span className={`w-px shrink-0 rounded-full ${railTone}`} aria-hidden />}
         <div className={isUser ? "flex w-full flex-col items-end gap-1.5" : "min-w-0 flex-1"}>
           {group.messages.map((message) => (
-            <article key={message.id} className={isUser ? "max-w-[85%] sm:max-w-[75%]" : "w-full"}>
+            <article
+              key={message.id}
+              // Cible du défilement de la recherche : les bornes d'occurrence
+              // portent sur le markdown SOURCE, pas sur le DOM rendu — on
+              // désigne donc le message entier plutôt que de surligner à côté.
+              data-message-id={message.id}
+              className={isUser ? "max-w-[85%] sm:max-w-[75%]" : "w-full"}
+            >
               <div
-                className={
+                className={`${
                   isUser
                     ? "rounded-2xl rounded-br-md border border-emerald-300/12 bg-emerald-300/8 px-3.5 py-2"
+                    : "rounded-lg"
+                } ${
+                  highlightedId === message.id
+                    ? "outline outline-2 outline-offset-4 outline-emerald-300/60"
                     : ""
-                }
+                }`}
               >
                 {message.reasoning && (
                   <ReasoningBlock text={message.reasoning} live={message.pending} />
@@ -472,6 +487,37 @@ export function ChatPanel({ chat, active }: { chat: ChatController; active: bool
     return () => clearInterval(timer);
   }, []);
 
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [highlight, setHighlight] = useState<ChatSearchHighlight | null>(null);
+  const highlightedId = highlight?.active?.messageId ?? null;
+
+  // Ctrl/Cmd+F détourné TANT QUE l'onglet chat est actif : chercher dans une
+  // conversation est l'attente évidente de ce raccourci ici, et la recherche
+  // native ne verrait de toute façon que la portion rendue du fil.
+  useEffect(() => {
+    if (!active) return;
+    const onKey = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "f") {
+        event.preventDefault();
+        setSearchOpen(true);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [active]);
+
+  // Amener l'occurrence courante sous les yeux. `block: "center"` plutôt que
+  // le défaut : une occurrence collée en haut ou en bas du cadre est
+  // difficile à situer dans la conversation.
+  useEffect(() => {
+    if (!highlightedId) return;
+    const node = scrollRef.current?.querySelector(`[data-message-id="${CSS.escape(highlightedId)}"]`);
+    if (!node) return;
+    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    programmaticScrollUntilRef.current = Date.now() + (reduceMotion ? 100 : 700);
+    node.scrollIntoView({ behavior: reduceMotion ? "auto" : "smooth", block: "center" });
+  }, [highlightedId]);
+
   const timeline = useMemo(() => buildTimeline(messages), [messages]);
 
   useEffect(() => storeDraft(draft), [draft]);
@@ -566,6 +612,21 @@ export function ChatPanel({ chat, active }: { chat: ChatController; active: bool
     >
       <header className="flex min-h-14 items-center justify-between gap-3 border-b border-[var(--border-subtle)] px-4 sm:px-5">
         <h2 className="text-sm font-semibold tracking-tight">Conversation</h2>
+        <div className="ml-auto flex items-center gap-2">
+          {/* Affordance visible : un raccourci clavier seul serait
+              indécouvrable, et l'onglet se consulte aussi au tactile. */}
+          <button
+            type="button"
+            onClick={() => setSearchOpen((open) => !open)}
+            aria-expanded={searchOpen}
+            className={`min-h-8 rounded-lg border px-2.5 text-2xs transition active:scale-[0.97] ${
+              searchOpen
+                ? "border-emerald-300/25 bg-emerald-300/10 text-emerald-200"
+                : "border-[var(--border-subtle)] bg-black/20 text-[var(--text-secondary)] hover:bg-white/6"
+            }`}
+          >
+            Rechercher
+          </button>
         <div
           className="flex items-center gap-2 rounded-full border border-[var(--border-subtle)] bg-black/20 px-2.5 py-1 text-2xs text-[var(--text-secondary)]"
           aria-live="polite"
@@ -577,7 +638,16 @@ export function ChatPanel({ chat, active }: { chat: ChatController; active: bool
           <span className="hidden sm:inline">{statusLabel}</span>
           <span className="sm:hidden">{connected ? "Connecté" : "Hors ligne"}</span>
         </div>
+        </div>
       </header>
+
+      {searchOpen && (
+        <ChatSearch
+          messages={messages}
+          onClose={() => setSearchOpen(false)}
+          onHighlight={setHighlight}
+        />
+      )}
 
       {/* Résumé opérationnel du panneau, avant le détail (UI_UX.md §2) : ce
           que fait l'agent maintenant, y compris pour un run venu d'ailleurs. */}
@@ -635,6 +705,7 @@ export function ChatPanel({ chat, active }: { chat: ChatController; active: bool
                 // l'animation signale un groupe NOUVEAU, pas le remplissage
                 // de la vue au chargement.
                 animate={!item.messages[0]?.id.startsWith("history-")}
+                highlightedId={highlightedId}
               />
             ),
           )}
