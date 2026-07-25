@@ -1,5 +1,16 @@
 import { describe, expect, test } from "bun:test";
-import { readOpenClawRuntime, type OpenClawStatusSource } from "./openclaw-status";
+import {
+  readOpenClawRuntime,
+  unavailableOpenClawRuntime,
+  type OpenClawStatusSource,
+} from "./openclaw-status";
+import { createOpenClawUsageReader } from "./openclaw-usage";
+
+// Lecteur neuf par appel : l'étranglement du lecteur par défaut ferait fuir
+// l'usage lu par un test dans le suivant.
+function usageReader() {
+  return createOpenClawUsageReader({ minIntervalMs: 0 });
+}
 
 function source(overrides: Partial<OpenClawStatusSource> = {}): OpenClawStatusSource {
   return {
@@ -50,13 +61,29 @@ function source(overrides: Partial<OpenClawStatusSource> = {}): OpenClawStatusSo
     getConfiguredModels: async () => ({
       models: [{ id: "qwen3.5:9b", provider: "ollama", available: true }],
     }),
+    // usage.status / usage.cost : forme réelle des handlers d'usage de la
+    // gateway (détaillée dans openclaw-usage.test.ts).
+    getUsageStatus: async () => ({
+      updatedAt: 1_000,
+      providers: [{
+        provider: "openai",
+        displayName: "OpenAI",
+        windows: [{ label: "5h", usedPercent: 20 }],
+      }],
+    }),
+    getUsageCost: async () => ({
+      updatedAt: 1_000,
+      days: 30,
+      totals: { totalTokens: 100, totalCost: 0.5 },
+      cacheStatus: { status: "fresh", cachedFiles: 3, pendingFiles: 0, staleFiles: 0 },
+    }),
     ...overrides,
   };
 }
 
 describe("readOpenClawRuntime", () => {
   test("normalizes active fallback and WhatsApp without leaking account identity", async () => {
-    const result = await readOpenClawRuntime(source());
+    const result = await readOpenClawRuntime(source(), usageReader());
 
     expect(result.provider).toBe("ollama");
     expect(result.model).toBe("qwen3.5:9b");
@@ -84,7 +111,7 @@ describe("readOpenClawRuntime", () => {
         called = true;
         return {};
       },
-    }));
+    }), usageReader());
 
     expect(called).toBe(false);
     expect(result.connected).toBe(false);
@@ -106,7 +133,7 @@ describe("readOpenClawRuntime", () => {
           },
         },
       }),
-    }));
+    }), usageReader());
 
     expect(result.whatsapp.healthy).toBe(true);
     expect(result.whatsapp.lastError).toBe("stream errored (515)");
@@ -117,7 +144,7 @@ describe("readOpenClawRuntime", () => {
       getAgentsSummary: async () => {
         throw new Error("agents unavailable");
       },
-    }));
+    }), usageReader());
 
     expect(result.provider).toBe("ollama");
     expect(result.model).toBe("qwen3.5:9b");
@@ -131,9 +158,55 @@ describe("readOpenClawRuntime", () => {
       getConfiguredModels: async () => {
         throw new Error("models unavailable");
       },
-    }));
+    }), usageReader());
 
     expect(result.model).toBe("qwen3.5:9b");
     expect(result.error).toBe("models unavailable");
+  });
+
+  test("joint l'usage au statut sans le confondre avec la santé de la gateway", async () => {
+    const result = await readOpenClawRuntime(source(), usageReader());
+
+    expect(result.usage?.quota.state).toBe("ready");
+    expect(result.usage?.quota.providers[0]?.worstUsedPercent).toBe(20);
+    expect(result.usage?.cost.state).toBe("ready");
+    // L'usage porte ses pannes dans ses propres états : il ne contribue
+    // jamais à `error`, qui reste le résumé des RPC de santé.
+    expect(result.error).toBeUndefined();
+  });
+
+  test("un usage en échec n'alourdit pas l'erreur de statut", async () => {
+    const result = await readOpenClawRuntime(
+      source({
+        getUsageStatus: async () => {
+          throw new Error("usage unreachable");
+        },
+      }),
+      usageReader(),
+    );
+
+    expect(result.healthy).toBe(true);
+    expect(result.error).toBeUndefined();
+    expect(result.usage?.quota.state).toBe("error");
+  });
+
+  test("gateway sans méthode d'usage : « non supporté », pas une carte vide", async () => {
+    const result = await readOpenClawRuntime(
+      source({
+        getUsageStatus: async () => null,
+        getUsageCost: async () => null,
+      }),
+      usageReader(),
+    );
+
+    expect(result.usage?.quota.state).toBe("unsupported");
+    expect(result.usage?.cost.state).toBe("unsupported");
+  });
+
+  test("hors connexion, l'usage est « pas encore mesuré » et non « non supporté »", () => {
+    const result = unavailableOpenClawRuntime({ version: null, uptimeMs: null });
+
+    expect(result.usage?.quota.state).toBe("pending");
+    expect(result.usage?.cost.state).toBe("pending");
   });
 });

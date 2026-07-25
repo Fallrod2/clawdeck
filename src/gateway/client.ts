@@ -663,6 +663,30 @@ export class GatewayClient extends EventEmitter {
     return this.request("models.list", { view: "configured" }, 8_000);
   }
 
+  // usage.status (operator.read, méthode annoncée) : quotas déclarés par les
+  // fournisseurs configurés. Le gating explicite rend null au lieu de laisser
+  // request() rejeter — une gateway qui n'annonce pas la méthode ne doit
+  // produire ni erreur à chaque cycle de statut, ni carte vide qu'on prendrait
+  // pour un quota à zéro (voir openclaw-usage.ts, état « unsupported »).
+  // Délai allongé : le handler interroge en direct les endpoints HTTP des
+  // fournisseurs (~6 s dans le pire cas), bien au-delà du défaut de 5 s.
+  getUsageStatus(): Promise<unknown | null> {
+    if (!this.supportsMethod("usage.status")) return Promise.resolve(null);
+    return this.request("usage.status", {}, 10_000);
+  }
+
+  // usage.cost (operator.read, méthode annoncée) : coût et jetons agrégés sur
+  // une fenêtre glissante. Aucun paramètre d'agent : le RPC retombe alors sur
+  // l'agent par défaut, seul périmètre que ce dashboard supervise (voir
+  // getDefaultAgent).
+  // mode « gateway » : les journées sont découpées sur le calendrier local de
+  // la machine qui héberge OpenClaw — la nôtre, donc celle de l'opérateur. Le
+  // défaut du RPC est UTC et décalerait les bornes de la fenêtre.
+  getUsageCost(days = 30): Promise<unknown | null> {
+    if (!this.supportsMethod("usage.cost")) return Promise.resolve(null);
+    return this.request("usage.cost", { days, mode: "gateway" }, 10_000);
+  }
+
   getLogs(cursor?: number): Promise<GatewayLogTailResult> {
     return this.request("logs.tail", {
       ...(cursor !== undefined ? { cursor } : {}),

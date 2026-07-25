@@ -1,7 +1,15 @@
 // src/openclaw-status.ts — normalisation des RPC OpenClaw vers un contrat UI
 // stable et sans données sensibles.
 
-export interface OpenClawStatusSource {
+import {
+  createOpenClawUsageReader,
+  pendingOpenClawUsage,
+  type OpenClawUsage,
+  type OpenClawUsageReader,
+  type OpenClawUsageSource,
+} from "./openclaw-usage";
+
+export interface OpenClawStatusSource extends OpenClawUsageSource {
   readonly isConnected: boolean;
   readonly version: string | null;
   readonly uptimeMs: number | null;
@@ -35,6 +43,10 @@ export interface OpenClawRuntimeStatus {
     lastActivityAt: number | null;
     lastError: string | null;
   };
+  // Optionnel dans le type pour qu'un consommateur écrit avant cet ajout reste
+  // valide, mais les deux constructeurs ci-dessous le renseignent toujours :
+  // un front à jour peut compter dessus, un front plus ancien l'ignore.
+  usage?: OpenClawUsage;
   error?: string;
 }
 
@@ -109,23 +121,39 @@ export function unavailableOpenClawRuntime(
     usingFallback: null,
     modelAvailable: null,
     whatsapp: emptyWhatsapp(),
+    // Hors connexion comme avant le premier cycle, aucune mesure d'usage n'a
+    // été tentée : « pending » le dit, là où l'absence de champ laisserait
+    // croire à une gateway incapable de répondre.
+    usage: pendingOpenClawUsage(),
     error,
   };
 }
 
+// Un seul lecteur pour le processus : l'étranglement qu'il porte n'a de sens
+// que partagé entre tous les cycles de collecte (voir openclaw-usage.ts).
+// Injectable pour que les tests restent sans état d'un cas à l'autre.
+const defaultUsageReader = createOpenClawUsageReader();
+
 export async function readOpenClawRuntime(
   source: OpenClawStatusSource,
+  usageReader: OpenClawUsageReader = defaultUsageReader,
 ): Promise<OpenClawRuntimeStatus> {
   if (!source.isConnected) {
     return unavailableOpenClawRuntime(source);
   }
 
-  const results = await Promise.allSettled([
-    source.getHealthSnapshot(),
-    source.getMainSessionEntry(),
-    source.getWhatsAppStatus(),
-    source.getConfiguredModels(),
-    source.getAgentsSummary(),
+  // La lecture d'usage est tenue hors du lot `allSettled` : elle ne rejette
+  // jamais et porte ses pannes dans ses propres états, alors que `error` du
+  // statut agrège les RPC dont l'échec dégrade la santé de la gateway.
+  const [results, usage] = await Promise.all([
+    Promise.allSettled([
+      source.getHealthSnapshot(),
+      source.getMainSessionEntry(),
+      source.getWhatsAppStatus(),
+      source.getConfiguredModels(),
+      source.getAgentsSummary(),
+    ]),
+    usageReader.read(source),
   ]);
   const health = record(settledValue(results[0]!));
   const sessionEntry = record(settledValue(results[1]!));
@@ -230,6 +258,7 @@ export async function readOpenClawRuntime(
       lastActivityAt: activityCandidates.length ? Math.max(...activityCandidates) : null,
       lastError,
     },
+    usage,
     ...(errors.length ? { error: errors.join("; ") } : {}),
   };
 }

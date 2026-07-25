@@ -82,6 +82,8 @@ const ALL_METHODS = [
   "chat.history",
   "chat.send",
   "chat.abort",
+  "usage.status",
+  "usage.cost",
 ];
 
 // hello-ok complet et réaliste : tous les champs requis par le schéma
@@ -211,6 +213,38 @@ describe("GatewayClient — négociation hello-ok", () => {
     socket.receive({ type: "res", id: listReq.id, ok: true, payload: { sessions: [{ key: "main" }] } });
     await Bun.sleep(20);
     expect(socket.sentFrames().some((f) => f.method === "sessions.messages.subscribe")).toBe(false);
+    client.stop();
+  });
+
+  test("découverte sans usage.* : null immédiat, aucune trame émise", async () => {
+    const { client, sockets } = createClient();
+    client.start();
+    const socket = sockets[0]!;
+    performHandshake(
+      socket,
+      helloOk({ methods: ALL_METHODS.filter((m) => !m.startsWith("usage.")) }),
+    );
+
+    // Ni erreur ni requête : une gateway plus ancienne ne doit produire aucun
+    // aller-retour voué au refus, cycle de statut après cycle de statut.
+    expect(await client.getUsageStatus()).toBeNull();
+    expect(await client.getUsageCost()).toBeNull();
+    expect(socket.sentFrames().some((f) => String(f.method ?? "").startsWith("usage."))).toBe(false);
+    client.stop();
+  });
+
+  test("usage.cost : fenêtre demandée et découpage des journées sur l'heure locale", async () => {
+    const { client, sockets } = createClient();
+    client.start();
+    const socket = sockets[0]!;
+    performHandshake(socket);
+
+    const pending = client.getUsageCost(7);
+    const req = socket.sentFrames().find((f) => f.method === "usage.cost")!;
+    expect(req.params).toEqual({ days: 7, mode: "gateway" });
+
+    socket.receive({ type: "res", id: req.id, ok: true, payload: { days: 7, totals: {} } });
+    expect(await pending).toEqual({ days: 7, totals: {} });
     client.stop();
   });
 });

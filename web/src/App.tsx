@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { TokenGate } from "./components/TokenGate";
 import { StatusCard, type Tone } from "./components/StatusCard";
 import { LatencyChart } from "./components/LatencyChart";
+import { AnomalyStrip } from "./components/AnomalyStrip";
 import { ChatPanel } from "./components/ChatPanel";
 import { LogsPanel } from "./components/LogsPanel";
 import { FilesPanel } from "./components/FilesPanel";
@@ -347,6 +348,12 @@ export default function App() {
                 </p>
               </div>
             </section>
+
+            {/* Après les deux conclusions sur l'instant, avant les cartes : ce
+                qui a lâché récemment se lit APRÈS l'état courant, mais avant le
+                détail service par service — sinon une panne transitoire, déjà
+                revenue au vert, resterait invisible. */}
+            <AnomalyStrip journal={status?.anomalies} hasStatus={status != null} stale={dataStale} />
 
             <section className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3" aria-label="État des services">
               <StatusCard

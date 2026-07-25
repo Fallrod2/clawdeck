@@ -1,6 +1,7 @@
 // src/status.ts — sondes de production et payload partagé du health panel.
 
 import { getEnv } from "./env";
+import { createAnomalyJournal, type AnomalyJournalPayload } from "./anomalies";
 import { checkGateway, checkOllama, type HttpCheckResult, type OllamaCheckResult } from "./checks";
 import { insertPing } from "./db";
 import {
@@ -18,6 +19,14 @@ const DEFAULT_ORANGE_GATEWAY = "192.168.1.1";
 // traitement qu'une cible externe fixe (voir CLOUDFLARE_HOST).
 const REMOTE_HOST = "83.204.110.38";
 
+// Journal des anomalies, EN MÉMOIRE et borné (voir anomalies.ts) : rien n'est
+// écrit sur disque, la liste repart vide au démarrage et le payload transporte
+// sa fenêtre d'observation pour le dire. L'état vit ici, à côté du cache de
+// passerelle de network.ts, parce que la détection d'une transition exige de
+// comparer deux cycles — et que ce module est le seul point de passage de
+// TOUS les cycles, ouvert ou non dans un navigateur.
+const anomalyJournal = createAnomalyJournal();
+
 export interface StatusPayload {
   timestamp: number;
   gateway: HttpCheckResult;
@@ -31,6 +40,10 @@ export interface StatusPayload {
   // Conclusion opérationnelle des trois sondes ci-dessus : trois pastilles
   // rouges ne disent pas si la panne est locale ou en amont (network-diagnosis.ts).
   network: NetworkDiagnosis;
+  // Ce qui a lâché récemment, même revenu au vert depuis. Voyage avec chaque
+  // instantané : un navigateur qui se reconnecte retrouve le journal sans
+  // requête supplémentaire ni réconciliation.
+  anomalies: AnomalyJournalPayload;
 }
 
 export async function collectStatus(
@@ -58,7 +71,7 @@ export async function collectStatus(
   insertPing("orange", orangeGatewayIp, orangePing.ok, orangePing.latencyMs);
   insertPing("remote", REMOTE_HOST, remotePing.ok, remotePing.latencyMs);
 
-  return {
+  const measured = {
     timestamp: Date.now(),
     gateway,
     openclaw,
@@ -74,4 +87,8 @@ export async function collectStatus(
       remote: { host: REMOTE_HOST, ok: remotePing.ok },
     }),
   };
+
+  // Horodaté par la MESURE et non par l'instant du pliage : une anomalie porte
+  // l'heure à laquelle elle a été constatée.
+  return { ...measured, anomalies: anomalyJournal.observe(measured, measured.timestamp) };
 }

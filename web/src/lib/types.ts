@@ -53,6 +53,33 @@ export interface NetworkDiagnosis {
   detail: string;
 }
 
+// Journal des anomalies récentes, tenu EN MÉMOIRE par le backend
+// (src/anomalies.ts) et rediffusé dans chaque instantané : le front ne détecte
+// aucune transition lui-même, il n'en verrait que celles survenues pendant
+// qu'un onglet était ouvert. Il ne fait donc que restituer — y compris la
+// fenêtre réellement observée, que `since` et `retentionMs` permettent
+// d'annoncer sans laisser croire à un historique complet.
+export interface AnomalyEntry {
+  key: string;
+  scope: string;
+  severity: "warning" | "critical";
+  label: string;
+  detail: string;
+  startedAt: number;
+  lastSeenAt: number;
+  /** null tant que l'anomalie est encore observée. */
+  endedAt: number | null;
+  /** Survenues regroupées sous cette entrée (1 = incident continu). */
+  occurrences: number;
+}
+
+export interface AnomalyJournal {
+  /** Début d'observation = démarrage du backend. */
+  since: number;
+  retentionMs: number;
+  entries: AnomalyEntry[];
+}
+
 export interface StatusPayload {
   timestamp: number;
   gateway: HttpCheck;
@@ -66,6 +93,10 @@ export interface StatusPayload {
   // Optionnel : un backend plus ancien que ce front n'en émet pas, l'interface
   // affiche alors « Diagnostic en attente » plutôt que de planter.
   network?: NetworkDiagnosis;
+  // Optionnel pour la même raison. Le front servi depuis le disque se met à
+  // jour d'un simple build, sans redémarrer le backend : les deux versions se
+  // croisent régulièrement en exploitation.
+  anomalies?: AnomalyJournal;
 }
 
 export interface PingRow {
