@@ -87,10 +87,22 @@ function parseOrigin(m: Record<string, unknown>): MessageOrigin | undefined {
   return { channel, ...(senderName ? { senderName } : {}) };
 }
 
-// Provider/modèle réellement utilisés, portés par chaque message d'historique.
+// Provider/modèle réellement utilisés, portés par le message lui-même.
 // `openclaw/delivery-mirror` n'est PAS un modèle : c'est le marqueur d'un
 // message recopié depuis un autre canal. L'afficher ferait croire à une
 // génération qui n'a jamais eu lieu.
+//
+// CONSÉQUENCE MESURÉE, à connaître avant de croire ce badge cassé : dans un
+// déploiement à miroir de livraison (le nôtre, WhatsApp), les messages qui
+// portent le vrai modèle ne contiennent QUE des appels d'outils — donc pas de
+// texte, donc jamais affichés — et le texte lu par l'opérateur est toujours un
+// miroir, sans modèle. Le badge n'apparaît alors nulle part, et c'est correct.
+//
+// Reporter le modèle d'un tour sur son miroir a été tenté puis ABANDONNÉ :
+// l'ordre réel du transcript place le tour outillé AVANT le message
+// utilisateur auquel il répondrait, l'association serait une supposition. La
+// question « suis-je sur le repli local ? » est déjà tranchée, globalement et
+// sûrement, par la carte « Provider actif » de la vue d'ensemble.
 function parseModel(m: Record<string, unknown>): MessageModel | undefined {
   const provider = asString(m.provider);
   const name = asString(m.model);

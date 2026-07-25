@@ -132,11 +132,9 @@ Voir §5 pour les décisions d'interface. Fonctionnellement :
   ou « Session interne ».
 - Regroupement des messages, séparateurs de jour, recherche locale, copie,
   brouillon persisté, compteur de caractères, amorces opérationnelles.
-- **Modèle ayant réellement produit chaque réponse**, avec le repli local
-  signalé en ambre — il peut prendre la main sans prévenir. `delivery-mirror`
-  n'est jamais affiché : c'est le marqueur d'un message recopié depuis un autre
-  canal, pas un modèle. Les compteurs `usage` des messages valent zéro dans le
-  transcript : les afficher serait un mensonge, pas une mesure.
+- **Modèle ayant produit une réponse**, avec le repli local signalé en ambre.
+  ⚠️ **Ce badge n'apparaît PAS dans notre déploiement**, et c'est correct :
+  voir « le modèle par message est inatteignable ici » au §6.
 - **Photos et vocaux reçus de WhatsApp**, lus par `/api/media` avec la même
   garde `realpath` que l'écriture. La CSP doit déclarer `media-src 'self'
   blob:` explicitement : sans elle, la directive retombe sur `default-src` et
@@ -353,6 +351,29 @@ immédiatement) ; un compteur d'échecs seul rate la bascule silencieuse
 (l'ancienne adresse reste pingable mais n'est plus la route par défaut). Les
 deux sont nécessaires. Et un ping réussi ne doit **jamais** prolonger le
 TTL — c'est précisément le cas que le TTL existe pour rattraper.
+
+### Le modèle par message est inatteignable ici
+
+Chaque message d'historique porte `provider`, `model`, `api` et `usage`. On
+pourrait croire l'attribution par réponse gratuite. Mesuré sur le transcript
+réel, elle ne l'est pas :
+
+- les messages qui portent le vrai modèle (`openai/gpt-5.6-luna`) ne
+  contiennent **que des appels d'outils**, donc aucun texte, donc ne sont
+  jamais affichés ;
+- le texte que lit l'opérateur est toujours un `openclaw/delivery-mirror`,
+  recopie de ce qui a été livré sur le canal — sans modèle ;
+- reporter le modèle du tour sur son miroir a été tenté puis abandonné :
+  **l'ordre réel place le tour outillé AVANT le message utilisateur** auquel il
+  répondrait, l'association ne serait qu'une supposition.
+
+Le code d'extraction est conservé (il est juste, et servirait à un déploiement
+sans miroir) mais le badge ne s'affiche nulle part. Ne pas le croire cassé.
+La question opérationnelle — « suis-je sur le repli local ? » — est déjà
+tranchée globalement et sûrement par la carte « Provider actif ».
+
+Les compteurs `usage` des messages valent tous zéro dans ce transcript : les
+afficher serait un mensonge, pas une mesure.
 
 ### Provenance d'un message
 
