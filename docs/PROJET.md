@@ -132,6 +132,16 @@ Voir §5 pour les décisions d'interface. Fonctionnellement :
   ou « Session interne ».
 - Regroupement des messages, séparateurs de jour, recherche locale, copie,
   brouillon persisté, compteur de caractères, amorces opérationnelles.
+- **Modèle ayant réellement produit chaque réponse**, avec le repli local
+  signalé en ambre — il peut prendre la main sans prévenir. `delivery-mirror`
+  n'est jamais affiché : c'est le marqueur d'un message recopié depuis un autre
+  canal, pas un modèle. Les compteurs `usage` des messages valent zéro dans le
+  transcript : les afficher serait un mensonge, pas une mesure.
+- **Photos et vocaux reçus de WhatsApp**, lus par `/api/media` avec la même
+  garde `realpath` que l'écriture. La CSP doit déclarer `media-src 'self'
+  blob:` explicitement : sans elle, la directive retombe sur `default-src` et
+  tout blob est refusé (constaté à l'exécution, la prédiction inverse était
+  fausse).
 
 ### Notifications (phase 3)
 
@@ -157,10 +167,49 @@ n'a pas rempli son office) ; les informations s'effacent, sinon la pile
 deviendrait l'historique qu'on refuse. `role="alert"` est réservé aux erreurs
 — il interrompt la lecture d'écran, en abuser le rend inaudible.
 
+### Journal d'anomalies
+
+Détecté côté **backend**, dans le seul point de passage de tous les cycles de
+sonde : une détection front n'aurait vu que les pannes survenues pendant qu'un
+onglet était ouvert — précisément celles dont on n'a pas besoin d'un journal.
+En mémoire, borné à 12 entrées et 24 h ; **ce n'est pas de la persistance**.
+
+Un signal par **sous-système** et non par case rouge : quand la gateway tombe,
+sa sonde HTTP, son WebSocket et sa santé RPC s'éteignent ensemble — une entrée,
+pas trois. Anti-rebond de 5 min : une anomalie qui revient rouvre son entrée en
+incrémentant ses occurrences, plutôt que de produire dix lignes qui perdent le
+début de l'épisode.
+
+Le journal **dit ce qu'il ne sait pas** : il repart vide à chaque redémarrage
+du backend, l'annonce, et son état vide n'a ni vert ni ✓ — seulement la fenêtre
+réellement observée.
+
+### Consommation et quotas
+
+`usage.status` et `usage.cost` (`operator.read` — gardes dynamiques des
+handlers vérifiées, pas seulement la table de scopes). Lecture étranglée à
+60 s : la boucle de statut frapperait sinon les endpoints fournisseurs près de
+6 000 fois par jour.
+
+Deux pièges d'affichage, évités :
+
+- la fenêtre montrée est **la plus consommée**, celle qui décide du blocage —
+  ni la moyenne, ni la première déclarée par le fournisseur ;
+- `totalCost` **n'est pas une facture** mais une valorisation calculée depuis
+  la table de tarifs d'OpenClaw ; avec des entrées non tarifées
+  (`missingCostEntries`), ce n'est même plus un total mais un plancher. Sur les
+  données réelles (102 entrées sans tarif, total à 0), l'interface annonce
+  « valorisation impossible » plutôt qu'un zéro trompeur.
+
+`sessions.usage` est écartée deux fois : non annoncée dans le hello-ok
+(`advertise: false`), et sa réponse porte des numéros WhatsApp.
+
 ### Logs
 
 Tail SSE via `logs.tail`, filtré et rédigé par OpenClaw, borné en mémoire,
-**jamais persisté** par clawdeck.
+**jamais persisté** par clawdeck. La reprise par curseur a été étudiée et
+écartée : le tailer ne tourne que tant qu'un client écoute, il n'y a donc rien
+à rejouer (voir `docs/EN-ATTENTE.md`).
 
 ### Fichiers
 

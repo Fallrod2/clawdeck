@@ -23,6 +23,8 @@ supervision, chat riche, notifications.
   `bun scripts/demo-shots.ts` (banc d'états), `bun scripts/smoke.ts`
   (bout en bout sur instance jetable).
 - Sauvegarde : `bun scripts/backup.ts`.
+- Accessibilité mesurée : `bun scripts/a11y.ts`. Contraste WCAG AA atteint
+  partout ; restent 2 cibles tactiles mineures assumées (onglet Fichiers).
 
 ---
 
@@ -55,15 +57,6 @@ supervision, chat riche, notifications.
 
 > Note : OpenClaw expose une infrastructure Web Push native (VAPID) qui serait
 > supérieure à ntfy, mais elle exige HTTPS. Voir `docs/EN-ATTENTE.md`.
-
-## Observabilité
-
-- [ ] Bandeau d'anomalies récentes sous le résumé global : dernier échec de
-  sonde ou déconnexion avec horodatage, **visible même après retour au vert**.
-  Aujourd'hui une panne transitoire ne laisse aucune trace consultable.
-- [ ] Résumé d'usage et de quota via les RPC `usage.status` / `usage.cost`,
-  sans nouvelle persistance. À conditionner à `supportsMethod` : ces méthodes
-  ne sont pas annoncées par toutes les versions de gateway.
 
 ## Tests et exploitation
 
