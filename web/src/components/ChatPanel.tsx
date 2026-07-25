@@ -10,6 +10,7 @@
 // ces contenus sans rien apporter.
 
 import {
+  isValidElement,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -72,21 +73,45 @@ function storeDraft(value: string) {
   }
 }
 
-// Bloc de code enrichi d'un bouton de copie. Le texte est lu au clic depuis
-// le DOM (textContent) plutôt que reconstruit depuis les nœuds markdown :
-// c'est exactement ce que l'utilisateur voit, sauts de ligne compris.
+// Langage annoncé par la clôture markdown (```ts), lu sur la classe que
+// react-markdown pose sur le <code> enfant. Sert d'orientation : le contenu
+// n'est délibérément PAS colorisé (voir docs/EN-ATTENTE.md), le repère de
+// langage apporte l'essentiel de ce que la coloration donnerait ici.
+function readCodeLanguage(children: unknown): string | null {
+  if (!isValidElement(children)) return null;
+  const className = (children.props as { className?: unknown } | null)?.className;
+  if (typeof className !== "string") return null;
+  const found = className.split(/\s+/).find((c) => c.startsWith("language-"));
+  const language = found?.slice("language-".length).trim();
+  // Un « langage » invraisemblable (texte collé par erreur après les
+  // backticks) ne doit pas devenir une étiquette illisible.
+  return language && /^[\w+#.-]{1,16}$/.test(language) ? language : null;
+}
+
+// Bloc de code enrichi d'un en-tête : langage à gauche, copie à droite. Le
+// texte est lu au clic depuis le DOM (textContent) plutôt que reconstruit
+// depuis les nœuds markdown : c'est exactement ce que l'utilisateur voit,
+// sauts de ligne compris.
 function PreBlock({ children, ...props }: ComponentPropsWithoutRef<"pre">) {
   const ref = useRef<HTMLPreElement>(null);
+  const language = readCodeLanguage(children);
   return (
-    <div className="group/code relative">
-      <pre ref={ref} {...props}>
+    <div className="group/code relative my-3 overflow-hidden rounded-lg border border-[var(--border-subtle)] bg-black/35">
+      <div className="flex min-h-8 items-center gap-2 border-b border-[var(--border-subtle)] px-3">
+        <span className="font-mono text-2xs uppercase tracking-[0.12em] text-[var(--text-muted)]">
+          {language ?? "texte"}
+        </span>
+        <CopyButton
+          getText={() => ref.current?.textContent ?? ""}
+          label="Copier le bloc de code"
+          className="ml-auto opacity-0 group-hover/code:opacity-100"
+        />
+      </div>
+      {/* Bordure et fond portés par le conteneur : le <pre> ne garde que le
+          défilement horizontal, sinon on empilerait deux cadres. */}
+      <pre {...props} ref={ref} className="!my-0 overflow-x-auto !rounded-none !border-0 !bg-transparent">
         {children}
       </pre>
-      <CopyButton
-        getText={() => ref.current?.textContent ?? ""}
-        label="Copier le bloc de code"
-        className="absolute right-2 top-2 opacity-0 group-hover/code:opacity-100"
-      />
     </div>
   );
 }
@@ -236,7 +261,9 @@ const PROSE_CLASSES =
   "prose-headings:mb-2 prose-headings:mt-5 prose-headings:font-semibold prose-headings:tracking-tight " +
   "prose-p:my-2 prose-li:my-0.5 prose-a:text-emerald-300 prose-a:underline-offset-2 " +
   "prose-strong:text-[var(--text-primary)] " +
-  "prose-pre:my-3 prose-pre:overflow-x-auto prose-pre:rounded-lg prose-pre:border prose-pre:border-[var(--border-subtle)] prose-pre:bg-black/35 " +
+  // Cadre, fond et marges des blocs de code sont portés par PreBlock : les
+  // laisser aussi ici empilerait deux bordures.
+  "prose-pre:overflow-x-auto " +
   "prose-code:text-[0.85em] prose-code:before:content-none prose-code:after:content-none " +
   "prose-table:text-sm prose-th:font-semibold";
 
@@ -278,14 +305,20 @@ function MessageStatus({ message, onRetry, retryDisabled }: {
 
   return (
     <div className="mt-1 flex items-center gap-2">
-      <span className="font-mono text-2xs text-[var(--text-muted)]">
+      <span className="text-2xs text-[var(--text-muted)]">
         {sending && (
           <span className="inline-flex items-center gap-1">
             <span className="inline-block h-1 w-1 animate-pulse rounded-full bg-current" aria-hidden />
             envoi en cours
           </span>
         )}
-        {failed && <span className="text-red-300">échec de l'envoi</span>}
+        {/* La cause est portée ICI et non dans la bulle : l'afficher aux deux
+            endroits répétait la même phrase à deux lignes d'écart. */}
+        {failed && (
+          <span className="text-red-300">
+            Échec de l'envoi{message.error ? ` — ${message.error}` : ""}
+          </span>
+        )}
       </span>
       {failed && onRetry && (
         <button
@@ -399,7 +432,12 @@ function GroupBlock({
                 {message.toolCalls.map((tool) => (
                   <ToolCallCard key={tool.id} tool={tool} />
                 ))}
-                {message.error && <p className="mt-2 text-xs text-red-300">{message.error}</p>}
+                {/* Erreur d'une RÉPONSE (interrompue, en échec côté agent).
+                    L'échec d'un envoi, lui, est annoncé sous la bulle par
+                    MessageStatus, avec son bouton de reprise. */}
+                {message.error && message.sendState !== "failed" && (
+                  <p className="mt-2 text-xs text-red-300">{message.error}</p>
+                )}
               </div>
               <MessageStatus
                 message={message}

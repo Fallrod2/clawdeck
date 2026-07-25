@@ -9,6 +9,8 @@
     "typecheck": "bunx tsc --noEmit && bun run --cwd web typecheck",
     "lint": "bun run --cwd web lint",
     "test": "bun test",
+    "demo": "bun run --cwd web demo",
+    "shots": "bun scripts/screenshot.ts",
     "check": "bun run typecheck && bun run lint && bun run test && bun run build"
   },
   "dependencies": {
