@@ -137,6 +137,15 @@ function channelLabel(channel: string): string {
   return CHANNEL_LABELS[channel] ?? channel;
 }
 
+// Fournisseurs qui signent un repli local plutôt que le modèle nominal. La
+// liste reste courte et explicite : mieux vaut ne pas signaler un repli réel
+// que d'en signaler un qui n'existe pas.
+const FALLBACK_PROVIDERS = new Set(["ollama", "llamacpp", "lmstudio"]);
+
+function isFallbackProvider(provider: string): boolean {
+  return FALLBACK_PROVIDERS.has(provider.toLowerCase());
+}
+
 function formatTime(timestamp: number): string {
   return new Date(timestamp).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
 }
@@ -428,6 +437,23 @@ function GroupHeading({ group }: { group: MessageGroup }) {
       {group.origin && (
         <span className="truncate rounded-full border border-[var(--border-subtle)] px-1.5 text-[var(--text-muted)]">
           via {channelLabel(group.origin.channel)}
+        </span>
+      )}
+      {/* Modèle ayant réellement répondu. Le repli local peut prendre la main
+          sans prévenir : savoir a posteriori quelle réponse en vient est une
+          information d'exploitation. Il est donc signalé, le modèle nominal
+          reste discret. */}
+      {group.model && (
+        <span
+          className={`hidden truncate font-mono sm:inline ${
+            isFallbackProvider(group.model.provider)
+              ? "rounded-full border border-amber-300/25 px-1.5 text-amber-200/90"
+              : "text-[var(--text-muted)]"
+          }`}
+          title={`${group.model.provider} / ${group.model.name}`}
+        >
+          {isFallbackProvider(group.model.provider) ? "repli local · " : ""}
+          {group.model.name}
         </span>
       )}
       {/* Estompé au repos mais toujours tabulable : un contrôle ne doit pas

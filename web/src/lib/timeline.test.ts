@@ -137,3 +137,31 @@ describe("formatDayLabel", () => {
     expect(formatDayLabel(lastYear, NOON)).toContain("2025");
   });
 });
+
+describe("buildTimeline — attribution de modèle", () => {
+  test("le groupe porte le modèle de ses messages", () => {
+    const items = buildTimeline([
+      msg({ id: "a", role: "assistant", model: { provider: "openai", name: "gpt-5.6-luna" } }),
+    ]);
+    expect(groups(items)[0]?.model?.name).toBe("gpt-5.6-luna");
+  });
+
+  test("changement de modèle en cours d'échange : groupes séparés", () => {
+    // Le cas qui compte : le repli local prend la main. Une étiquette unique
+    // attribuerait à un modèle des réponses produites par l'autre.
+    const items = buildTimeline([
+      msg({ id: "a", role: "assistant", timestamp: NOON, model: { provider: "openai", name: "gpt-5.6-luna" } }),
+      msg({ id: "b", role: "assistant", timestamp: NOON + 1_000, model: { provider: "ollama", name: "qwen3.5:9b" } }),
+    ]);
+    expect(groups(items)).toHaveLength(2);
+    expect(groups(items)[1]?.model?.provider).toBe("ollama");
+  });
+
+  test("modèle absent puis présent : groupes séparés aussi", () => {
+    const items = buildTimeline([
+      msg({ id: "a", role: "assistant", timestamp: NOON }),
+      msg({ id: "b", role: "assistant", timestamp: NOON + 1_000, model: { provider: "openai", name: "x" } }),
+    ]);
+    expect(groups(items)).toHaveLength(2);
+  });
+});

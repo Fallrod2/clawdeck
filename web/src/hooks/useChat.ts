@@ -11,6 +11,7 @@ import {
   type ChatMessage,
   type DeliveryRoute,
   type GatewayConnectionState,
+  type MessageModel,
   type MessageOrigin,
   type RunActivity,
   type ToolCall,
@@ -85,6 +86,18 @@ function parseOrigin(m: Record<string, unknown>): MessageOrigin | undefined {
   return { channel, ...(senderName ? { senderName } : {}) };
 }
 
+// Provider/modèle réellement utilisés, portés par chaque message d'historique.
+// `openclaw/delivery-mirror` n'est PAS un modèle : c'est le marqueur d'un
+// message recopié depuis un autre canal. L'afficher ferait croire à une
+// génération qui n'a jamais eu lieu.
+function parseModel(m: Record<string, unknown>): MessageModel | undefined {
+  const provider = asString(m.provider);
+  const name = asString(m.model);
+  if (!provider || !name) return undefined;
+  if (provider === "openclaw" || name === "delivery-mirror") return undefined;
+  return { provider, name };
+}
+
 function parseHistory(raw: unknown): ChatMessage[] {
   const messages = asRecord(raw)?.messages;
   if (!Array.isArray(messages)) return [];
@@ -104,7 +117,7 @@ function parseHistory(raw: unknown): ChatMessage[] {
       timestamp: typeof m.timestamp === "number" ? m.timestamp : Date.now(),
       pending: false,
       toolCalls: [],
-      ...(role === "user" ? { origin: parseOrigin(m) } : {}),
+      ...(role === "user" ? { origin: parseOrigin(m) } : { model: parseModel(m) }),
     });
   });
   return out;
@@ -449,7 +462,7 @@ export function useChat(token: string | null) {
             // Message venu d'ailleurs (le téléphone) : sa provenance est
             // affichée, sinon rien ne distingue ce que J'AI écrit ici de ce
             // que j'ai écrit sur WhatsApp.
-            ...(role === "user" ? { origin: parseOrigin(m) } : {}),
+            ...(role === "user" ? { origin: parseOrigin(m) } : { model: parseModel(m) }),
           },
         ]);
       });

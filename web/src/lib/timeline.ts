@@ -6,7 +6,7 @@
 // séparateur quand le jour calendaire change — deux repères que tout client
 // de messagerie possède et dont l'absence rend un long fil illisible.
 
-import type { ChatMessage, MessageOrigin } from "./chatTypes";
+import type { ChatMessage, MessageModel, MessageOrigin } from "./chatTypes";
 
 /** Au-delà de ce silence entre deux messages, on ouvre un nouveau groupe. */
 export const GROUP_WINDOW_MS = 5 * 60_000;
@@ -17,6 +17,8 @@ export interface MessageGroup {
   role: "user" | "assistant";
   /** Provenance commune au groupe (canal externe), sinon absente. */
   origin?: MessageOrigin;
+  /** Modèle commun au groupe, sinon absent. */
+  model?: MessageModel;
   /** Heure du premier message : celle affichée en tête de groupe. */
   timestamp: number;
   messages: ChatMessage[];
@@ -48,6 +50,10 @@ function sameDay(a: number, b: number): boolean {
 function joinsGroup(group: MessageGroup, message: ChatMessage): boolean {
   if (group.role !== message.role) return false;
   if (group.origin?.channel !== message.origin?.channel) return false;
+  // Un changement de modèle ouvre un groupe : c'est justement quand le repli
+  // local prend la main en cours d'échange qu'il ne faut pas afficher une
+  // seule étiquette pour des réponses produites par deux modèles différents.
+  if (group.model?.name !== message.model?.name) return false;
   const previous = group.messages[group.messages.length - 1];
   if (!previous) return false;
   if (!sameDay(previous.timestamp, message.timestamp)) return false;
@@ -86,6 +92,7 @@ export function buildTimeline(messages: ChatMessage[]): TimelineItem[] {
       key: `group-${message.id}`,
       role: message.role,
       ...(message.origin ? { origin: message.origin } : {}),
+      ...(message.model ? { model: message.model } : {}),
       timestamp: message.timestamp,
       messages: [message],
     };

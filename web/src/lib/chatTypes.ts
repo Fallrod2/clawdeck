@@ -59,6 +59,15 @@ export interface ChatMessage {
   // Flux `thinking` : raisonnement de l'agent, texte cumulatif. Replié par
   // défaut — c'est un éclairage sur le POURQUOI d'une action, pas la réponse.
   reasoning?: string;
+  // Modèle ayant RÉELLEMENT produit la réponse, tel qu'enregistré par OpenClaw.
+  // Le fallback local peut prendre la main sans prévenir : savoir a posteriori
+  // quelle réponse en vient est une information d'exploitation, pas un détail.
+  model?: MessageModel;
+}
+
+export interface MessageModel {
+  provider: string;
+  name: string;
 }
 
 // Activité d'un run de l'agent, reconstruite depuis les événements `agent`
