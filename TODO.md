@@ -41,9 +41,11 @@ Contraintes permanentes :
   réconciliation de l'historique après reconnexion quand l'UI a déjà des
   messages, et test d'intégration WhatsApp reproductible.
 - [ ] Phase 3 : aucune notification dashboard/ntfy n'est implémentée.
-- [ ] Qualité : 45 tests unitaires (env, validation, network, collecteurs,
-  logs, log-tailer, watchdog gateway, openclaw-status) ; il manque encore db,
-  les routes HTTP/WS de bout en bout, et toute CI.
+- [ ] Qualité : 84 tests unitaires au 2026-07-25 (env, validation, network,
+  collecteurs, logs, log-tailer, gateway — watchdogs, protocole, route de
+  livraison —, workspace, openclaw-status, et la logique du bandeau
+  d'activité côté front). CI GitHub Actions en place. Il manque encore db et
+  les routes HTTP/WS de bout en bout.
 - [x] Le chat cassé en mode dev (proxy Vite sans WebSocket) : corrigé le
   2026-07-17 (`ws: true`).
 
