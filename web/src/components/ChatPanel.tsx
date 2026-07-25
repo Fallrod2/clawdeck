@@ -9,8 +9,49 @@ import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 const REMARK_PLUGINS = [remarkGfm];
-import type { ChatMessage, ToolCall } from "../lib/chatTypes";
+import type { ChatMessage, DeliveryRoute, ToolCall } from "../lib/chatTypes";
 import type { ChatController } from "../hooks/useChat";
+
+// Noms de canaux OpenClaw → libellé humain. Un canal inconnu est affiché tel
+// quel plutôt que masqué : mieux vaut un nom brut qu'une provenance perdue.
+const CHANNEL_LABELS: Record<string, string> = {
+  whatsapp: "WhatsApp",
+  telegram: "Telegram",
+  signal: "Signal",
+  imessage: "iMessage",
+  discord: "Discord",
+  slack: "Slack",
+  sms: "SMS",
+  email: "E-mail",
+};
+
+function channelLabel(channel: string): string {
+  return CHANNEL_LABELS[channel] ?? channel;
+}
+
+// Où part un message écrit ici. Sans route externe connue, la réponse reste
+// dans la session : le dire explicitement évite de croire le téléphone servi.
+function DeliveryBadge({ route }: { route: DeliveryRoute | null }) {
+  const external = route !== null;
+  return (
+    <p
+      className={`mb-2 flex items-center gap-1.5 px-1 text-[11px] ${
+        external ? "text-emerald-200/85" : "text-[var(--text-muted)]"
+      }`}
+      aria-live="polite"
+    >
+      <span aria-hidden>{external ? "↗" : "○"}</span>
+      {external ? (
+        <span>
+          Relayé vers {channelLabel(route.channel)}
+          <span className="text-[var(--text-muted)]"> · {route.to}</span>
+        </span>
+      ) : (
+        <span>Session interne seule — aucun canal externe épinglé</span>
+      )}
+    </p>
+  );
+}
 
 function formatPayload(value: unknown): string | null {
   if (value == null) return null;
@@ -74,7 +115,12 @@ function MessageBubble({
   });
 
   return (
-    <article className={`flex ${isUser ? "justify-end" : "justify-start"}`} aria-label={`Message ${isUser ? "utilisateur" : "assistant"} à ${time}`}>
+    <article
+      className={`flex ${isUser ? "justify-end" : "justify-start"}`}
+      aria-label={`Message ${isUser ? "utilisateur" : "assistant"} à ${time}${
+        message.origin ? `, reçu via ${channelLabel(message.origin.channel)}` : ""
+      }`}
+    >
       <div className={`max-w-[92%] sm:max-w-[82%] ${isUser ? "items-end" : "items-start"}`}>
         <div
           className={`rounded-2xl px-4 py-3 ${
@@ -115,6 +161,9 @@ function MessageBubble({
             reste discret : le suffixe « envoi en cours » disparaît. */}
         <p className={`mt-1.5 px-1 font-mono text-[10px] text-[var(--text-muted)] ${isUser ? "text-right" : "text-left"}`}>
           {isUser ? "Vous" : "OpenClaw"} · {time}
+          {/* Message entré par un canal externe : sans cette mention, rien ne
+              distingue ce que j'ai écrit ici de ce que j'ai écrit au téléphone. */}
+          {message.origin && ` · via ${channelLabel(message.origin.channel)}`}
           {message.pending ? " · en cours" : ""}
           {message.sendState === "sending" ? " · envoi en cours" : ""}
           {message.sendState === "failed" && <span className="text-red-300"> · échec de l'envoi</span>}
@@ -125,7 +174,8 @@ function MessageBubble({
 }
 
 export function ChatPanel({ chat, active }: { chat: ChatController; active: boolean }) {
-  const { messages, wsState, gatewayConnected, activeRunId, abortPending, abortError, send, retry, abort } = chat;
+  const { messages, wsState, gatewayConnected, deliveryRoute, activeRunId, abortPending, abortError, send, retry, abort } =
+    chat;
   const [draft, setDraft] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
   const followMessagesRef = useRef(true);
@@ -232,6 +282,9 @@ export function ChatPanel({ chat, active }: { chat: ChatController; active: bool
         <p className={abortError ? "mb-2 px-1 text-xs text-red-300" : "sr-only"} aria-live="polite">
           {abortError ? `Interruption impossible : ${abortError}` : ""}
         </p>
+        {/* Hors connexion, aucune route ne peut être affirmée : la pastille
+            d'état de l'en-tête porte déjà l'information. */}
+        {connected && <DeliveryBadge route={deliveryRoute} />}
         <form
           className="rounded-xl border border-white/10 bg-black/20 p-2 transition-colors focus-within:border-emerald-300/25"
           onSubmit={(event) => {

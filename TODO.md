@@ -220,6 +220,15 @@ chat ne sont pas fiables tant qu'elles ne sont pas terminées.
 - [x] Interruption via `chat.abort` (`abortRun` côté client gateway, frames
   `abort`/`abort-ok`/`abort-error`, bouton « Interrompre » pendant la réponse,
   états en attente/interrompu/échoué affichés) — fait le 2026-07-18.
+- [x] Canal de livraison visible (fait le 2026-07-25) : le backend expose la
+  route résolue (`deliveryRouteInfo`, événement `delivery-route` émis sur
+  changement réel), le composeur affiche « Relayé vers WhatsApp · +33… » ou
+  « Session interne seule », et les messages entrés par un canal externe
+  portent « via WhatsApp ». Motivé par la série de bugs de sync des 18 et 25
+  juillet : la rupture de continuité était invisible jusqu'à ce qu'un message
+  se perde. Étiquetage conditionné à `sourceChannel` externe ET à une identité
+  d'expéditeur, pour ne jamais taguer nos propres envois (qui épinglent
+  `originatingChannel: whatsapp`).
 - [ ] Vérifier la livraison WhatsApp par un test d'intégration reproductible :
   message envoyé depuis le dashboard, réponse visible dans le dashboard et dans
   le canal d'origine, sans doublon.

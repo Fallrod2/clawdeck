@@ -455,6 +455,64 @@ describe("GatewayClient — sendChatMessage", () => {
   });
 });
 
+describe("GatewayClient — route de livraison exposée", () => {
+  async function answerSessionsList(socket: FakeSocket, entry: Record<string, unknown>) {
+    await waitFor(() => socket.sentFrames().some((f) => f.method === "sessions.list"));
+    const req = socket.sentFrames().find((f) => f.method === "sessions.list")!;
+    socket.receive({ type: "res", id: req.id, ok: true, payload: { sessions: [entry] } });
+    await Bun.sleep(10);
+  }
+
+  test("route résolue puis perdue : un événement par changement réel", async () => {
+    const { client, sockets } = createClient();
+    const events: unknown[] = [];
+    client.on("delivery-route", (route: unknown) => events.push(route));
+    client.start();
+    const socket = sockets[0]!;
+    performHandshake(socket);
+    await answerSessionsList(socket, {
+      key: "main",
+      deliveryContext: { channel: "whatsapp", to: "+33600000000" },
+    });
+
+    expect(client.deliveryRouteInfo).toEqual({ channel: "whatsapp", to: "+33600000000", accountId: undefined });
+    expect(events).toHaveLength(1);
+
+    // sessions.changed invalide la route : second événement (null), puis la
+    // re-résolution qui suit ne doit pas en produire un troisième tant que
+    // la gateway n'a pas répondu.
+    socket.receive({ type: "event", event: "sessions.changed", payload: {} });
+    await Bun.sleep(10);
+    expect(client.deliveryRouteInfo).toBeNull();
+    expect(events).toEqual([{ channel: "whatsapp", to: "+33600000000", accountId: undefined }, null]);
+    client.stop();
+  });
+
+  test("route inchangée d'une résolution à l'autre : aucun événement redondant", async () => {
+    const { client, sockets } = createClient();
+    const events: unknown[] = [];
+    client.on("delivery-route", (route: unknown) => events.push(route));
+    client.start();
+    const socket = sockets[0]!;
+    performHandshake(socket);
+    const entry = { key: "main", deliveryContext: { channel: "whatsapp", to: "+33600000000" } };
+    await answerSessionsList(socket, entry);
+    expect(events).toHaveLength(1);
+
+    // Nouvelle résolution provoquée par sessions.changed : la route repasse
+    // par null (1 événement) puis retrouve la MÊME valeur — l'émission qui
+    // suit est légitime, mais une troisième résolution identique ne l'est pas.
+    socket.receive({ type: "event", event: "sessions.changed", payload: {} });
+    await waitFor(() => socket.sentFrames().filter((f) => f.method === "sessions.list").length >= 2);
+    const second = socket.sentFrames().filter((f) => f.method === "sessions.list")[1]!;
+    socket.receive({ type: "res", id: second.id, ok: true, payload: { sessions: [entry] } });
+    await Bun.sleep(10);
+    expect(events).toHaveLength(3); // route → null → même route
+
+    client.stop();
+  });
+});
+
 describe("GatewayClient — abortRun", () => {
   test("après handshake : frame chat.abort avec la clé de session et le runId", async () => {
     const { client, sockets } = createClient();

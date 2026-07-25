@@ -218,6 +218,9 @@ gateway.on("status", (status: { connected: boolean; error?: string }) => {
 gateway.on("chat", (payload: unknown) => broadcast({ type: "chat", payload }));
 gateway.on("agent", (payload: unknown) => broadcast({ type: "agent", payload }));
 gateway.on("session-message", (payload: unknown) => broadcast({ type: "session-message", payload }));
+// Route de livraison de la session : le composeur du front affiche où part un
+// message (WhatsApp ou session interne seule).
+gateway.on("delivery-route", (route: unknown) => broadcast({ type: "delivery-route", route }));
 // Trou de seq sur la connexion gateway : des événements ont pu être manqués,
 // on resonde immédiatement l'état OpenClaw.
 gateway.on("resync", () => openclawCollector.refresh());
@@ -279,6 +282,7 @@ app.get(
             chatClients.add(ws);
             ws.send(JSON.stringify({ type: "auth-ok" }));
             ws.send(JSON.stringify({ type: "gateway-status", connected: gateway.isConnected }));
+            ws.send(JSON.stringify({ type: "delivery-route", route: gateway.deliveryRouteInfo }));
             gateway
               .getHistory()
               .then((messages) => {

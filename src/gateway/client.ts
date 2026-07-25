@@ -49,7 +49,7 @@ interface PendingRequest {
 // Route de livraison de la session principale vers son canal d'origine
 // (ex. WhatsApp) : épinglée explicitement sur chaque chat.send pour que la
 // réponse reparte sur le téléphone ET que la session ne bascule pas webchat.
-interface DeliveryRoute {
+export interface DeliveryRoute {
   channel: string;
   to: string;
   accountId?: string;
@@ -180,6 +180,28 @@ export class GatewayClient extends EventEmitter {
     return this.supportsMethod("logs.tail");
   }
 
+  // Route de livraison courante, relayée au front : l'opérateur doit voir où
+  // part ce qu'il écrit (WhatsApp ou session interne), sans quoi une rupture
+  // de continuité reste invisible jusqu'à ce qu'un message se perde.
+  get deliveryRouteInfo(): DeliveryRoute | null {
+    return this.deliveryRoute ? { ...this.deliveryRoute } : null;
+  }
+
+  // Passage obligé de toute mutation de la route : n'émet "delivery-route"
+  // que sur changement réel, pour ne pas rediffuser à chaque envoi.
+  private setDeliveryRoute(next: DeliveryRoute | null) {
+    const previous = this.deliveryRoute;
+    const unchanged =
+      previous === next ||
+      (!!previous &&
+        !!next &&
+        previous.channel === next.channel &&
+        previous.to === next.to &&
+        previous.accountId === next.accountId);
+    this.deliveryRoute = next;
+    if (!unchanged) this.emit("delivery-route", next ? { ...next } : null);
+  }
+
   private openSocket() {
     const ws = this.socketFactory(this.wsUrl);
     this.ws = ws;
@@ -224,7 +246,7 @@ export class GatewayClient extends EventEmitter {
       this.authScopes = null;
       this.lastEventSeq = null;
       this.subscribedSessionKey = null;
-      this.deliveryRoute = null;
+      this.setDeliveryRoute(null);
       this.defaultAgentCache = null;
       this.rejectAllPending(new Error("gateway connection closed"));
       if (wasConnected) this.emit("status", { connected: false });
@@ -333,7 +355,7 @@ export class GatewayClient extends EventEmitter {
     // livraison changer. On invalide la route et on refait setupSession
     // (le réabonnement est idempotent côté gateway).
     if (msg.type === "event" && msg.event === "sessions.changed") {
-      this.deliveryRoute = null;
+      this.setDeliveryRoute(null);
       this.subscribedSessionKey = null;
       this.setupSession().catch(() => {
         // best-effort : retentera au prochain sessions.changed ou reconnect
@@ -511,7 +533,7 @@ export class GatewayClient extends EventEmitter {
       ];
       for (const c of candidates) {
         if (c?.channel && c.channel !== "webchat" && c.to) {
-          this.deliveryRoute = { channel: c.channel, to: c.to, accountId: c.accountId ?? undefined };
+          this.setDeliveryRoute({ channel: c.channel, to: c.to, accountId: c.accountId ?? undefined });
           break;
         }
       }

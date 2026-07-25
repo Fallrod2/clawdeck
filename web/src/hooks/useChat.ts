@@ -9,7 +9,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   parseServerFrame,
   type ChatMessage,
+  type DeliveryRoute,
   type GatewayConnectionState,
+  type MessageOrigin,
   type ToolCall,
 } from "../lib/chatTypes";
 
@@ -63,6 +65,23 @@ function extractText(content: unknown): string {
     .join("");
 }
 
+// Provenance d'un message tel qu'OpenClaw l'a enregistré. Deux conditions
+// exigées, pas une : un canal externe ET une identité d'expéditeur (les
+// messages WhatsApp portent senderId/senderName/senderE164). Le dashboard
+// épingle `originatingChannel: whatsapp` sur ses propres envois pour que la
+// réponse reparte sur le téléphone — si la gateway en dérive un
+// `sourceChannel`, le seul critère du canal étiquetterait « via WhatsApp »
+// des messages écrits ICI. L'identité d'expéditeur, elle, n'existe que pour
+// un message réellement reçu d'une personne sur un canal.
+function parseOrigin(m: Record<string, unknown>): MessageOrigin | undefined {
+  const channel = asString(m.sourceChannel);
+  if (!channel || channel === "webchat") return undefined;
+  const senderName = asString(m.senderName) ?? asString(m.senderLabel);
+  const hasSenderIdentity = Boolean(senderName ?? asString(m.senderE164) ?? asString(m.senderId));
+  if (!hasSenderIdentity) return undefined;
+  return { channel, ...(senderName ? { senderName } : {}) };
+}
+
 function parseHistory(raw: unknown): ChatMessage[] {
   const messages = asRecord(raw)?.messages;
   if (!Array.isArray(messages)) return [];
@@ -82,6 +101,7 @@ function parseHistory(raw: unknown): ChatMessage[] {
       timestamp: typeof m.timestamp === "number" ? m.timestamp : Date.now(),
       pending: false,
       toolCalls: [],
+      ...(role === "user" ? { origin: parseOrigin(m) } : {}),
     });
   });
   return out;
@@ -97,6 +117,9 @@ export function useChat(token: string | null) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [wsState, setWsState] = useState<GatewayConnectionState>("connecting");
   const [gatewayConnected, setGatewayConnected] = useState(false);
+  // Route de livraison annoncée par le backend : null = la réponse restera
+  // dans la session sans repartir sur un canal externe.
+  const [deliveryRoute, setDeliveryRoute] = useState<DeliveryRoute | null>(null);
   // Token refusé par le backend (fermeture 1008) : App purge alors le token
   // stocké, via la même garde que le flux SSE (useStatusStream.rejectedToken).
   const [rejectedToken, setRejectedToken] = useState<string | null>(null);
@@ -307,6 +330,10 @@ export function useChat(token: string | null) {
             timestamp: typeof m.timestamp === "number" ? m.timestamp : now,
             pending: false,
             toolCalls: [],
+            // Message venu d'ailleurs (le téléphone) : sa provenance est
+            // affichée, sinon rien ne distingue ce que J'AI écrit ici de ce
+            // que j'ai écrit sur WhatsApp.
+            ...(role === "user" ? { origin: parseOrigin(m) } : {}),
           },
         ]);
       });
@@ -388,7 +415,15 @@ export function useChat(token: string | null) {
             break;
           case "gateway-status":
             setGatewayConnected(frame.connected);
-            if (!frame.connected) setActiveRunId(null);
+            if (!frame.connected) {
+              setActiveRunId(null);
+              // Gateway perdue : la route connue ne vaut plus rien, ne pas
+              // laisser le composeur promettre une livraison WhatsApp.
+              setDeliveryRoute(null);
+            }
+            break;
+          case "delivery-route":
+            setDeliveryRoute(frame.route);
             break;
           case "history":
             setMessages((prev) => (prev.length === 0 ? parseHistory(frame.messages) : prev));
@@ -450,6 +485,7 @@ export function useChat(token: string | null) {
         setGatewayConnected(false);
         setActiveRunId(null);
         setAbortPending(false);
+        setDeliveryRoute(null);
         failOrphanSends();
         if (ev.code === 1008) {
           // Fermeture 1008 : token refusé ou auth expirée. C'est un état
@@ -557,6 +593,7 @@ export function useChat(token: string | null) {
     messages,
     wsState,
     gatewayConnected,
+    deliveryRoute,
     rejectedToken,
     activeRunId,
     abortPending,

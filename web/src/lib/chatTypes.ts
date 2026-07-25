@@ -20,6 +20,14 @@ export interface ToolCall {
 // d'ailleurs (WhatsApp…) et les réponses de l'assistant.
 export type SendState = "sending" | "sent" | "failed";
 
+// Canal par lequel un message est ENTRÉ dans la session (sourceChannel côté
+// OpenClaw). Absent pour tout ce qui vient d'ici ou de la session elle-même :
+// seul un message venu d'ailleurs (téléphone…) porte cette provenance.
+export interface MessageOrigin {
+  channel: string;
+  senderName?: string;
+}
+
 export interface ChatMessage {
   id: string;
   role: "user" | "assistant";
@@ -31,6 +39,16 @@ export interface ChatMessage {
   // Id local d'envoi, corrélé aux frames send-ok/send-error du backend.
   clientMessageId?: string;
   sendState?: SendState;
+  origin?: MessageOrigin;
+}
+
+// Route de livraison épinglée par le backend sur chaque envoi (voir
+// gateway/client.ts) : null = aucune route externe connue, la réponse
+// restera dans la session sans repartir sur le téléphone.
+export interface DeliveryRoute {
+  channel: string;
+  to: string;
+  accountId?: string;
 }
 
 // « unauthorized » : fermeture WS 1008 (token refusé) — état d'auth définitif,
@@ -47,6 +65,7 @@ export type ServerFrame =
   | { type: "chat"; payload: unknown }
   | { type: "agent"; payload: unknown }
   | { type: "session-message"; payload: unknown }
+  | { type: "delivery-route"; route: DeliveryRoute | null }
   | { type: "send-ok"; clientMessageId: string; runId?: string }
   | { type: "send-error"; clientMessageId: string; message: string }
   | { type: "abort-ok" }
@@ -85,6 +104,24 @@ export function parseServerFrame(raw: string): ServerFrame | null {
       return { type: "agent", payload: frame.payload };
     case "session-message":
       return { type: "session-message", payload: frame.payload };
+    case "delivery-route": {
+      // Route incomplète ou absente → null explicite : « aucune route
+      // externe », état affiché tel quel plutôt que passé sous silence.
+      const raw = frame.route;
+      const route =
+        raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>) : null;
+      if (typeof route?.channel !== "string" || typeof route.to !== "string" || !route.channel || !route.to) {
+        return { type: "delivery-route", route: null };
+      }
+      return {
+        type: "delivery-route",
+        route: {
+          channel: route.channel,
+          to: route.to,
+          ...(typeof route.accountId === "string" ? { accountId: route.accountId } : {}),
+        },
+      };
+    }
     case "send-ok":
       if (typeof frame.clientMessageId !== "string") return null;
       return {
