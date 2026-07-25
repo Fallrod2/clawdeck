@@ -236,6 +236,16 @@ chat ne sont pas fiables tant qu'elles ne sont pas terminées.
   bloquant). Un run muet plus de 90 s est écarté plutôt qu'affiché « en
   cours » indéfiniment. Logique pure isolée dans `web/src/lib/activity.ts`
   (9 tests) — premiers tests front du projet, `bun test` les ramasse.
+- [x] Bouton « N nouveaux messages » (fait le 2026-07-25) : quand on a remonté
+  le fil, l'autoscroll est désactivé et plus rien ne signalait une arrivée hors
+  de vue. Suivi passé de ref à état, fenêtre de garde sur le défilement
+  programmé (sinon l'animation douce se fait passer pour une remontée
+  manuelle). Les envois propres ne comptent pas comme non lus.
+- [x] Copie d'un message et d'un bloc de code (fait le 2026-07-25) : boutons
+  estompés au repos mais toujours tabulables (UI_UX §7), accusé discret.
+  `navigator.clipboard` est ABSENT ici (http:// sur IP Tailscale = contexte
+  non sécurisé, même contrainte que `crypto.randomUUID`) → retombée sur
+  `document.execCommand` dans `web/src/lib/clipboard.ts`.
 - [ ] Vérifier la livraison WhatsApp par un test d'intégration reproductible :
   message envoyé depuis le dashboard, réponse visible dans le dashboard et dans
   le canal d'origine, sans doublon.

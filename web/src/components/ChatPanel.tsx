@@ -2,16 +2,40 @@
 // Le hook useChat vit dans App (la connexion doit survivre au changement
 // d'onglet) : ce panneau ne fait qu'afficher son état et relayer ses actions.
 
-import { useEffect, useRef, useState } from "react";
-import Markdown from "react-markdown";
+import { useCallback, useEffect, useRef, useState, type ComponentPropsWithoutRef } from "react";
+import Markdown, { type Components } from "react-markdown";
 // GFM : tableaux, listes de tâches et texte barré produits par l'agent —
 // sans rehype-raw, le HTML reste échappé (pas de XSS).
 import remarkGfm from "remark-gfm";
-
-const REMARK_PLUGINS = [remarkGfm];
+import { CopyButton } from "./CopyButton";
 import type { ChatMessage, DeliveryRoute, ToolCall } from "../lib/chatTypes";
 import type { ChatController } from "../hooks/useChat";
 import { ActivityStrip } from "./ActivityStrip";
+
+const REMARK_PLUGINS = [remarkGfm];
+
+// Bloc de code enrichi d'un bouton de copie. Le texte est lu au clic depuis
+// le DOM (textContent) plutôt que reconstruit depuis les nœuds markdown :
+// c'est exactement ce que l'utilisateur voit, sauts de ligne compris.
+function PreBlock({ children, ...props }: ComponentPropsWithoutRef<"pre">) {
+  const ref = useRef<HTMLPreElement>(null);
+  return (
+    <div className="group/code relative">
+      <pre ref={ref} {...props}>
+        {children}
+      </pre>
+      <CopyButton
+        getText={() => ref.current?.textContent ?? ""}
+        label="Copier le bloc de code"
+        className="absolute right-2 top-2 opacity-0 group-hover/code:opacity-100"
+      />
+    </div>
+  );
+}
+
+// Constante de module : une nouvelle référence à chaque rendu forcerait
+// react-markdown à tout reconstruire à chaque delta de streaming.
+const MARKDOWN_COMPONENTS: Components = { pre: PreBlock };
 
 // Noms de canaux OpenClaw → libellé humain. Un canal inconnu est affiché tel
 // quel plutôt que masqué : mieux vaut un nom brut qu'une provenance perdue.
@@ -124,7 +148,7 @@ function MessageBubble({
 
   return (
     <article
-      className={`flex ${isNew ? "clawdeck-enter" : ""} ${isUser ? "justify-end" : "justify-start"}`}
+      className={`group/message flex ${isNew ? "clawdeck-enter" : ""} ${isUser ? "justify-end" : "justify-start"}`}
       aria-label={`Message ${isUser ? "utilisateur" : "assistant"} à ${time}${
         message.origin ? `, reçu via ${channelLabel(message.origin.channel)}` : ""
       }`}
@@ -143,7 +167,9 @@ function MessageBubble({
                 streaming ? "clawdeck-streaming" : ""
               }`}
             >
-              <Markdown remarkPlugins={REMARK_PLUGINS}>{message.text}</Markdown>
+              <Markdown remarkPlugins={REMARK_PLUGINS} components={MARKDOWN_COMPONENTS}>
+                {message.text}
+              </Markdown>
             </div>
           ) : message.pending ? (
             <span className="inline-flex items-center gap-1 py-1 text-[var(--text-muted)]" aria-label="Réponse en cours">
@@ -171,21 +197,32 @@ function MessageBubble({
             annoncés par la région role="log" aria-live du conteneur : pas de
             live region imbriquée pour éviter les annonces doublées. L'accusé
             reste discret : le suffixe « envoi en cours » disparaît. */}
-        <p className={`mt-1.5 px-1 font-mono text-[10px] text-[var(--text-muted)] ${isUser ? "text-right" : "text-left"}`}>
-          {isUser ? "Vous" : "OpenClaw"} · {time}
-          {/* Message entré par un canal externe : sans cette mention, rien ne
-              distingue ce que j'ai écrit ici de ce que j'ai écrit au téléphone. */}
-          {message.origin && ` · via ${channelLabel(message.origin.channel)}`}
-          {message.pending ? " · en cours" : ""}
-          {message.sendState === "sending" && (
-            <span>
-              {" · "}
-              <span className="inline-block h-1 w-1 animate-pulse rounded-full bg-current align-middle" aria-hidden />
-              {" envoi en cours"}
-            </span>
+        <div className={`mt-1.5 flex items-center gap-2 px-1 ${isUser ? "justify-end" : "justify-start"}`}>
+          <p className="font-mono text-[10px] text-[var(--text-muted)]">
+            {isUser ? "Vous" : "OpenClaw"} · {time}
+            {/* Message entré par un canal externe : sans cette mention, rien ne
+                distingue ce que j'ai écrit ici de ce que j'ai écrit au téléphone. */}
+            {message.origin && ` · via ${channelLabel(message.origin.channel)}`}
+            {message.pending ? " · en cours" : ""}
+            {message.sendState === "sending" && (
+              <span>
+                {" · "}
+                <span className="inline-block h-1 w-1 animate-pulse rounded-full bg-current align-middle" aria-hidden />
+                {" envoi en cours"}
+              </span>
+            )}
+            {message.sendState === "failed" && <span className="text-red-300"> · échec de l'envoi</span>}
+          </p>
+          {/* Estompé au repos mais toujours tabulable : un contrôle ne doit
+              pas dépendre du survol (UI_UX.md §7). */}
+          {message.text && (
+            <CopyButton
+              getText={() => message.text}
+              label="Copier le message"
+              className="opacity-0 group-hover/message:opacity-100"
+            />
           )}
-          {message.sendState === "failed" && <span className="text-red-300"> · échec de l'envoi</span>}
-        </p>
+        </div>
       </div>
     </article>
   );
@@ -207,18 +244,48 @@ export function ChatPanel({ chat, active }: { chat: ChatController; active: bool
   } = chat;
   const [draft, setDraft] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
-  const followMessagesRef = useRef(true);
+  // « Suit le bas du fil » : état et non ref, l'UI en dépend désormais.
+  const [following, setFollowing] = useState(true);
+  const [unread, setUnread] = useState(0);
+  // Ids déjà vus, figés au dernier passage en bas de fil.
+  const seenIdsRef = useRef(new Set<string>());
+  // Un scrollTo programmé déclenche lui aussi onScroll, avec des positions
+  // intermédiaires loin du bas : sans cette fenêtre de garde, l'animation
+  // douce se ferait passer pour une remontée manuelle et ferait clignoter le
+  // bouton « nouveaux messages ».
+  const programmaticScrollUntilRef = useRef(0);
+
+  const scrollToBottom = useCallback(() => {
+    const viewport = scrollRef.current;
+    if (!viewport) return;
+    // Un behavior explicite ignore la règle CSS prefers-reduced-motion : on
+    // respecte la préférence ici même.
+    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    programmaticScrollUntilRef.current = Date.now() + (reduceMotion ? 100 : 700);
+    viewport.scrollTo({ top: viewport.scrollHeight, behavior: reduceMotion ? "auto" : "smooth" });
+  }, []);
 
   useEffect(() => {
     // Panneau masqué (autre onglet) : hauteurs à zéro, on rattrape le bas de
     // conversation au retour sur l'onglet plutôt qu'à chaque message.
-    if (!active || !followMessagesRef.current) return;
-    const viewport = scrollRef.current;
-    // Un behavior explicite ignore la règle CSS prefers-reduced-motion : on
-    // respecte la préférence ici même.
-    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    viewport?.scrollTo({ top: viewport.scrollHeight, behavior: reduceMotion ? "auto" : "smooth" });
-  }, [messages, active]);
+    if (!active || !following) return;
+    scrollToBottom();
+  }, [messages, active, following, scrollToBottom]);
+
+  useEffect(() => {
+    // Onglet masqué : rien n'est « vu », le compteur doit continuer à monter.
+    if (!active) return;
+    if (following) {
+      seenIdsRef.current = new Set(messages.map((m) => m.id));
+      setUnread(0);
+      return;
+    }
+    // Mes propres envois ne comptent pas comme « nouveaux » : je viens de les
+    // écrire. Ceux venus d'un canal externe (origin renseigné), si.
+    setUnread(
+      messages.filter((m) => !seenIdsRef.current.has(m.id) && !(m.role === "user" && !m.origin)).length,
+    );
+  }, [messages, active, following]);
 
   const connected = wsState === "open" && gatewayConnected;
   const statusLabel =
@@ -236,7 +303,8 @@ export function ChatPanel({ chat, active }: { chat: ChatController; active: bool
     if (!connected || !draft.trim()) return;
     if (send(draft)) {
       setDraft("");
-      followMessagesRef.current = true;
+      // Envoyer vaut retour au bas du fil : on veut voir sa propre réponse.
+      setFollowing(true);
     }
   }
 
@@ -258,39 +326,65 @@ export function ChatPanel({ chat, active }: { chat: ChatController; active: bool
           que fait l'agent maintenant, y compris pour un run venu d'ailleurs. */}
       <ActivityStrip activity={activity} connected={connected} />
 
-      <div
-        ref={scrollRef}
-        className="flex-1 space-y-5 overflow-y-auto px-4 py-5 sm:px-6"
-        role="log"
-        aria-live="polite"
-        aria-label="Messages de la conversation"
-        onScroll={(event) => {
-          const element = event.currentTarget;
-          followMessagesRef.current = element.scrollHeight - element.scrollTop - element.clientHeight < 80;
-        }}
-      >
-        {messages.length === 0 && (
-          <div className="flex h-full min-h-60 flex-col items-center justify-center text-center">
-            <div className="mb-4 flex h-11 w-11 items-center justify-center rounded-xl border border-white/8 bg-white/3 font-mono text-xs text-[var(--text-muted)]" aria-hidden>
-              &gt;_
+      <div className="relative flex-1 overflow-hidden">
+        <div
+          ref={scrollRef}
+          className="h-full space-y-5 overflow-y-auto px-4 py-5 sm:px-6"
+          role="log"
+          aria-live="polite"
+          aria-label="Messages de la conversation"
+          onScroll={(event) => {
+            // Défilement programmé en cours : ce n'est pas l'utilisateur qui
+            // remonte, on ne réévalue pas le suivi.
+            if (Date.now() < programmaticScrollUntilRef.current) return;
+            const element = event.currentTarget;
+            setFollowing(element.scrollHeight - element.scrollTop - element.clientHeight < 80);
+          }}
+        >
+          {messages.length === 0 && (
+            <div className="flex h-full min-h-60 flex-col items-center justify-center text-center">
+              <div className="mb-4 flex h-11 w-11 items-center justify-center rounded-xl border border-white/8 bg-white/3 font-mono text-xs text-[var(--text-muted)]" aria-hidden>
+                &gt;_
+              </div>
+              <p className="text-sm font-medium text-[var(--text-secondary)]">La conversation est prête</p>
+              <p className="mt-2 max-w-xs text-xs leading-5 text-[var(--text-muted)]">
+                Les messages et appels d'outils de la session principale apparaîtront ici.
+              </p>
             </div>
-            <p className="text-sm font-medium text-[var(--text-secondary)]">La conversation est prête</p>
-            <p className="mt-2 max-w-xs text-xs leading-5 text-[var(--text-muted)]">
-              Les messages et appels d'outils de la session principale apparaîtront ici.
-            </p>
+          )}
+          {messages.map((message) => {
+            const retryId = message.sendState === "failed" ? message.clientMessageId : undefined;
+            return (
+              <MessageBubble
+                key={message.id}
+                message={message}
+                onRetry={retryId ? () => retry(retryId) : undefined}
+                retryDisabled={!connected}
+              />
+            );
+          })}
+        </div>
+        {/* Remonté dans le fil pendant que ça continue en bas : sans ce
+            repère, rien ne signale l'arrivée d'un message hors de vue —
+            l'autoscroll est justement désactivé dans ce cas. */}
+        {unread > 0 && (
+          // Centrage par flex et non par -translate-x-1/2 : l'animation
+          // d'entrée anime `transform`, elle écraserait le centrage et le
+          // bouton sauterait latéralement à l'apparition.
+          <div className="pointer-events-none absolute inset-x-0 bottom-3 flex justify-center">
+            <button
+              type="button"
+              onClick={() => {
+                setFollowing(true);
+                scrollToBottom();
+              }}
+              className="clawdeck-enter pointer-events-auto flex min-h-9 items-center gap-2 rounded-full border border-emerald-300/25 bg-[var(--surface-raised)] px-4 text-xs font-medium text-emerald-200 shadow-lg shadow-black/40 transition hover:bg-white/8 active:scale-[0.97]"
+            >
+              <span aria-hidden>↓</span>
+              {unread} nouveau{unread > 1 ? "x" : ""} message{unread > 1 ? "s" : ""}
+            </button>
           </div>
         )}
-        {messages.map((message) => {
-          const retryId = message.sendState === "failed" ? message.clientMessageId : undefined;
-          return (
-            <MessageBubble
-              key={message.id}
-              message={message}
-              onRetry={retryId ? () => retry(retryId) : undefined}
-              retryDisabled={!connected}
-            />
-          );
-        })}
       </div>
 
       <div className="border-t border-white/8 bg-black/10 p-3 sm:p-4">
