@@ -9,7 +9,7 @@
 // Les informations, elles, s'effacent — les laisser s'empiler ferait de cette
 // zone un historique, ce que l'architecture du projet refuse.
 
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import type { DashboardNotification, NotificationSeverity } from "../hooks/useNotifications";
 
 // Durées de vie par gravité. `null` = persiste jusqu'à fermeture explicite.
@@ -49,12 +49,21 @@ function NotificationCard({
 }) {
   const tone = TONE[notification.severity];
 
+  // La fermeture est gardée en ref, et le minuteur ne dépend QUE de l'identité
+  // de la notification. Le parent passe une lambda en ligne et App se re-rend
+  // chaque seconde (horloge de fraîcheur) : mettre `onDismiss` en dépendance
+  // réarmait le minuteur à chaque battement, et une notification
+  // d'information ne disparaissait jamais.
+  const fermer = useRef(onDismiss);
+  useEffect(() => {
+    fermer.current = onDismiss;
+  });
   useEffect(() => {
     const delay = AUTO_DISMISS_MS[notification.severity];
     if (delay === null) return;
-    const timer = setTimeout(onDismiss, delay);
+    const timer = setTimeout(() => fermer.current(), delay);
     return () => clearTimeout(timer);
-  }, [notification.severity, onDismiss]);
+  }, [notification.id, notification.severity]);
 
   return (
     <article
