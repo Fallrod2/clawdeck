@@ -150,6 +150,33 @@ Arrêt : `sudo launchctl bootout system/com.clawdeck.server`.
 Rollback : `bootout`, restaurer l'ancien plist (ou `git checkout` puis
 réinstaller), relancer le script.
 
+## Notifications
+
+`POST /api/notify` diffuse une notification aux navigateurs connectés et, si
+`NTFY_URL`/`NTFY_TOPIC` sont renseignés dans `.env`, la relaie vers ntfy (donc
+vers l'iPhone). Rien n'est conservé : une notification manquée est manquée, le
+dashboard n'est pas une boîte de réception.
+
+```bash
+curl -X POST http://127.0.0.1:3001/api/notify \
+  -H "Authorization: Bearer $AUTH_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -H 'Idempotency-Key: sauvegarde-2026-07-25' \
+  -d '{"v":1,"title":"Sauvegarde terminée","message":"12 Go copiés en 4 min.","severity":"info","tags":["backup"]}'
+```
+
+**C'est ainsi qu'OpenClaw peut prévenir son opérateur** : il lui suffit
+d'appeler cette URL depuis un `exec`, à la fin d'une tâche longue ou sur une
+anomalie qu'il détecte lui-même. `severity: "error"` monte la priorité ntfy au
+maximum (l'alerte traverse le mode « ne pas déranger » de l'iPhone) et la
+notification reste affichée jusqu'à fermeture explicite.
+
+Codes de réponse : `200` (diffusé ; relais ntfy envoyé ou non configuré),
+`207` (diffusé localement mais **relais ntfy en échec** — un `200` masquerait
+la perte), `400`, `413`, `429`. Rejouer la même `Idempotency-Key` renvoie la
+réponse d'origine sans rien réémettre ; pour réessayer réellement, changer de
+clé.
+
 ## Sauvegarde et restauration
 
 ```bash
