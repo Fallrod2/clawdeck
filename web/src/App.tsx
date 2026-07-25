@@ -19,11 +19,13 @@ const RANGES = [
   { label: "7 jours", shortLabel: "7 j", hours: 24 * 7 },
 ];
 
+// `short` sert la navigation mobile : « Vue d'ensemble » sur quatre colonnes
+// à 390 px débordait de sa cellule et chevauchait l'onglet voisin.
 const TABS = [
-  { id: "health", label: "Vue d'ensemble" },
-  { id: "chat", label: "Chat" },
-  { id: "logs", label: "Logs" },
-  { id: "files", label: "Fichiers" },
+  { id: "health", label: "Vue d'ensemble", short: "État" },
+  { id: "chat", label: "Chat", short: "Chat" },
+  { id: "logs", label: "Logs", short: "Logs" },
+  { id: "files", label: "Fichiers", short: "Fichiers" },
 ] as const;
 type TabId = (typeof TABS)[number]["id"];
 
@@ -211,18 +213,20 @@ export default function App() {
           </div>
         </div>
 
-        <nav className="mx-auto grid max-w-6xl grid-cols-4 gap-1 px-4 pb-3 sm:hidden" aria-label="Navigation principale (mobile)">
+        <nav className="mx-auto grid max-w-6xl grid-cols-4 gap-1 px-4 pb-2.5 sm:hidden" aria-label="Navigation principale (mobile)">
           {TABS.map((item) => (
             <button
               key={item.id}
               type="button"
               onClick={() => setTab(item.id)}
               aria-current={tab === item.id ? "page" : undefined}
-              className={`min-h-10 rounded-lg px-3 text-sm transition-colors ${
+              // Libellé court + whitespace-nowrap : à 390 px une cellule fait
+              // ~85 px, un libellé qui passe à la ligne déborde sur le voisin.
+              className={`min-h-10 truncate whitespace-nowrap rounded-lg px-1 text-xs font-medium transition-colors ${
                 tab === item.id ? "bg-white/9 text-white" : "text-[var(--text-muted)]"
               }`}
             >
-              {item.label}
+              {item.short}
             </button>
           ))}
         </nav>
@@ -373,12 +377,16 @@ export default function App() {
             d'onglet. Le panneau inactif est masqué (hidden) et sorti du
             clavier comme de l'arbre d'accessibilité (inert + aria-hidden). */}
         <div hidden={tab !== "chat"} inert={tab !== "chat"} aria-hidden={tab !== "chat"}>
-          <section className="mb-6">
-            <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-emerald-300/80">
+          {/* Chrome de page réduit sur mobile : à 390 px, l'ombrelle
+              « Session principale + titre + description » mangeait 250 px et
+              repoussait le composeur sous la ligne de flottaison. L'onglet
+              actif annonce déjà « Chat ». */}
+          <section className="mb-3 sm:mb-6">
+            <p className="mb-2 hidden text-[10px] font-semibold uppercase tracking-[0.2em] text-emerald-300/80 sm:block">
               Session principale
             </p>
-            <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">Chat OpenClaw</h1>
-            <p className="mt-2 max-w-xl text-sm leading-6 text-[var(--text-secondary)]">
+            <h1 className="text-lg font-semibold tracking-tight sm:text-3xl">Chat OpenClaw</h1>
+            <p className="mt-2 hidden max-w-xl text-sm leading-6 text-[var(--text-secondary)] sm:block">
               Conversation en direct avec l'agent et visibilité sur ses appels d'outils.
             </p>
           </section>

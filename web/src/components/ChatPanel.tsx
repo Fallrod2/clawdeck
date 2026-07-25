@@ -204,24 +204,30 @@ function MessageBody({ message }: { message: ChatMessage }) {
   );
 }
 
-function MessageActions({ message, onRetry, retryDisabled }: {
+// Ligne d'état d'un message. Ne s'affiche QUE s'il y a quelque chose à dire :
+// une ligne rendue en permanence réservait 28 px sous chaque bulle et gonflait
+// un groupe à 119 px pour le mot « hey » (mesuré au DOM le 2026-07-25).
+function MessageStatus({ message, onRetry, retryDisabled }: {
   message: ChatMessage;
   onRetry?: () => void;
   retryDisabled?: boolean;
 }) {
+  const sending = message.sendState === "sending";
+  const failed = message.sendState === "failed";
+  if (!sending && !failed) return null;
+
   return (
     <div className="mt-1 flex items-center gap-2">
       <span className="font-mono text-2xs text-[var(--text-muted)]">
-        {message.pending && " en cours"}
-        {message.sendState === "sending" && (
+        {sending && (
           <span className="inline-flex items-center gap-1">
             <span className="inline-block h-1 w-1 animate-pulse rounded-full bg-current" aria-hidden />
             envoi en cours
           </span>
         )}
-        {message.sendState === "failed" && <span className="text-red-300">échec de l'envoi</span>}
+        {failed && <span className="text-red-300">échec de l'envoi</span>}
       </span>
-      {message.sendState === "failed" && onRetry && (
+      {failed && onRetry && (
         <button
           type="button"
           onClick={onRetry}
@@ -231,24 +237,25 @@ function MessageActions({ message, onRetry, retryDisabled }: {
           Réessayer
         </button>
       )}
-      {/* Estompé au repos mais toujours tabulable : un contrôle ne doit pas
-          dépendre du survol (UI_UX.md §7). */}
-      {message.text && (
-        <CopyButton
-          getText={() => message.text}
-          label="Copier le message"
-          className="opacity-0 group-hover/message:opacity-100"
-        />
-      )}
     </div>
   );
 }
 
+// En-tête de groupe : auteur, heure, provenance — et la copie. Le bouton vit
+// ICI plutôt que sous chaque bulle pour ne pas réserver une ligne d'actions
+// par message ; il copie tout le groupe, ce qui est aussi plus utile quand
+// l'agent a répondu en plusieurs morceaux.
 function GroupHeading({ group }: { group: MessageGroup }) {
   const isUser = group.role === "user";
+  const copyText = () =>
+    group.messages
+      .map((m) => m.text)
+      .filter(Boolean)
+      .join("\n\n");
+
   return (
-    <p
-      className={`mb-1.5 flex items-baseline gap-2 text-2xs ${isUser ? "justify-end" : "justify-start"}`}
+    <div
+      className={`mb-1 flex min-h-6 items-center gap-2 text-2xs ${isUser ? "justify-end" : "justify-start"}`}
     >
       <span className="font-medium tracking-[0.04em] text-[var(--text-secondary)]">
         {isUser ? "Vous" : "OpenClaw"}
@@ -257,11 +264,18 @@ function GroupHeading({ group }: { group: MessageGroup }) {
       {/* Provenance portée UNE fois par le groupe : sans elle, rien ne
           distingue ce qui a été écrit ici de ce qui vient du téléphone. */}
       {group.origin && (
-        <span className="rounded-full border border-[var(--border-subtle)] px-1.5 text-[var(--text-muted)]">
+        <span className="truncate rounded-full border border-[var(--border-subtle)] px-1.5 text-[var(--text-muted)]">
           via {channelLabel(group.origin.channel)}
         </span>
       )}
-    </p>
+      {/* Estompé au repos mais toujours tabulable : un contrôle ne doit pas
+          dépendre du survol (UI_UX.md §7). */}
+      <CopyButton
+        getText={copyText}
+        label={isUser ? "Copier votre message" : "Copier la réponse"}
+        className="opacity-0 group-hover/grp:opacity-100"
+      />
+    </div>
   );
 }
 
@@ -287,20 +301,20 @@ function GroupBlock({
       : "bg-[var(--border-strong)]";
 
   return (
-    <section className={animate ? "clawdeck-enter" : ""} aria-label={`${isUser ? "Vous" : "OpenClaw"} à ${formatTime(group.timestamp)}`}>
+    <section
+      className={`group/grp ${animate ? "clawdeck-enter" : ""}`}
+      aria-label={`${isUser ? "Vous" : "OpenClaw"} à ${formatTime(group.timestamp)}`}
+    >
       <GroupHeading group={group} />
       <div className={isUser ? "flex flex-col items-end gap-1.5" : "flex gap-3"}>
         {!isUser && <span className={`w-px shrink-0 rounded-full ${railTone}`} aria-hidden />}
         <div className={isUser ? "flex w-full flex-col items-end gap-1.5" : "min-w-0 flex-1"}>
           {group.messages.map((message) => (
-            <article
-              key={message.id}
-              className={`group/message ${isUser ? "max-w-[85%] sm:max-w-[75%]" : "w-full"}`}
-            >
+            <article key={message.id} className={isUser ? "max-w-[85%] sm:max-w-[75%]" : "w-full"}>
               <div
                 className={
                   isUser
-                    ? "rounded-2xl rounded-br-md border border-emerald-300/12 bg-emerald-300/8 px-4 py-2.5"
+                    ? "rounded-2xl rounded-br-md border border-emerald-300/12 bg-emerald-300/8 px-3.5 py-2"
                     : ""
                 }
               >
@@ -310,7 +324,7 @@ function GroupBlock({
                 ))}
                 {message.error && <p className="mt-2 text-xs text-red-300">{message.error}</p>}
               </div>
-              <MessageActions
+              <MessageStatus
                 message={message}
                 onRetry={
                   message.sendState === "failed" && message.clientMessageId
@@ -474,7 +488,11 @@ export function ChatPanel({ chat, active }: { chat: ChatController; active: bool
 
   return (
     <section
-      className="flex h-[calc(100vh-14rem)] min-h-[34rem] max-h-[54rem] flex-col overflow-hidden rounded-xl border border-[var(--border-subtle)] bg-[var(--surface-panel)]"
+      // Hauteur mobile en `dvh` : sur iOS, `vh` compte la barre d'adresse
+      // rétractée, donc le composeur finissait masqué par le chrome du
+      // navigateur. Le plancher reste bas pour que la zone de saisie tienne
+      // toujours à l'écran sur un téléphone.
+      className="flex h-[calc(100dvh-13rem)] min-h-[22rem] flex-col overflow-hidden rounded-xl border border-[var(--border-subtle)] bg-[var(--surface-panel)] sm:h-[calc(100vh-16rem)] sm:min-h-[34rem] sm:max-h-[54rem]"
       onKeyDown={(event) => {
         // Échap interrompt la réponse en cours, où que soit le focus dans le
         // panneau — raccourci attendu de tout client de chat moderne.
