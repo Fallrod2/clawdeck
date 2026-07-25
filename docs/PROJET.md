@@ -308,6 +308,23 @@ contournements** ; c'est bloqué sur l'activation des certificats HTTPS dans la
 console d'administration Tailscale (`tailscale cert` répond « your Tailscale
 account does not support getting TLS certs »).
 
+### `Bun.serve` tue les flux SSE au bout de 10 secondes
+
+Le défaut `idleTimeout` de Bun ferme toute requête restée **silencieuse** dix
+secondes. Or le silence est l'état NORMAL d'un flux SSE : un tail de logs peut
+ne rien avoir à dire pendant des minutes.
+
+Mesuré le 2026-07-25 : `/api/notifications` tombait à 8,5 s, `/api/logs` à
+12 s. Conséquence grave et invisible — les notifications émises pendant la
+reconnexion étaient **perdues**, puisque rien n'est conservé par conception.
+Seul `/api/status` survivait, par chance : il émet toutes les 5 s.
+
+Deux protections, pas une : `idleTimeout: 240` sur `Bun.serve`, et un
+battement de maintien sur chaque flux qui peut rester muet. Le seul indice
+était une ligne discrète dans stdout — `[Bun.serve]: request timed out after
+10 seconds`. **Vérifier la durée de vie réelle d'un flux long après toute
+montée de version de Bun.**
+
 ### Reconnexion immédiate : ne jamais doubler un flux
 
 Les quatre flux du front (statut, logs, notifications, chat) se relancent au

@@ -37,6 +37,16 @@ import {
 } from "./openclaw-status";
 
 const POLL_INTERVAL_MS = 5000;
+// Secondes d'inactivité tolérées par Bun sur une requête. Le défaut (10 s)
+// tue les flux SSE, dont le silence est l'état normal. 240 s reste sous le
+// maximum accepté par Bun (255) tout en laissant une marge confortable
+// au-dessus du battement de maintien de chaque flux.
+const SSE_IDLE_TIMEOUT_S = 240;
+// Battement écrit sur les flux qui peuvent rester longtemps muets. Il sert à
+// deux choses : garder la connexion vivante pour tout intermédiaire qui
+// n'aurait pas la même patience que nous, et prouver au client que le silence
+// vient de l'absence d'événements, pas d'une liaison morte.
+const SSE_KEEPALIVE_MS = 20_000;
 // Délai laissé à la première connexion gateway avant de la déclarer
 // indisponible dans le journal : plus long que le watchdog de handshake du
 // client (10 s), donc au moins une tentative complète a eu lieu.
@@ -186,12 +196,22 @@ app.get("/api/logs", (c) => {
       notify();
     });
 
+    // Un tail peut rester muet plusieurs minutes : le battement évite qu'un
+    // silence normal passe pour une liaison morte (voir SSE_KEEPALIVE_MS).
+    const keepalive = setInterval(notify, SSE_KEEPALIVE_MS);
+
     try {
       while (!closed) {
         if (!pending.length && !pendingError && !pendingReset && !pendingTruncated) {
           await new Promise<void>((resolve) => {
             wake = resolve;
           });
+          // Réveil sans rien à dire = battement : on écrit un commentaire SSE,
+          // ignoré par le client, qui suffit à garder la liaison vivante.
+          if (!closed && !pending.length && !pendingError && !pendingReset && !pendingTruncated) {
+            await stream.writeSSE({ data: "", event: "keepalive" });
+            continue;
+          }
         }
         if (closed) break;
         if (pendingError) {
@@ -216,6 +236,7 @@ app.get("/api/logs", (c) => {
         }
       }
     } finally {
+      clearInterval(keepalive);
       unsubscribe();
     }
   });
@@ -757,6 +778,14 @@ if (import.meta.main) {
     hostname: getEnv().bindHost,
     fetch: app.fetch,
     websocket,
+    // Sans ce réglage, Bun ferme toute requête restée SILENCIEUSE 10 secondes.
+    // Mesuré le 2026-07-25 : /api/notifications tombait au bout de 8,5 s et
+    // /api/logs au bout de 12 s — or ce sont des flux SSE volontairement
+    // longs, dont le silence est l'état normal. Les notifications émises
+    // pendant la reconnexion étaient PERDUES (rien n'est conservé, par
+    // conception). Chaque flux émet par ailleurs un battement bien avant ce
+    // délai : la valeur haute est une ceinture, le battement la bretelle.
+    idleTimeout: SSE_IDLE_TIMEOUT_S,
   });
 
   process.once("SIGINT", () => void shutdown("SIGINT"));
