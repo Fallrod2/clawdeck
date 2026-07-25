@@ -17,7 +17,12 @@ const CLOUDFLARE_HOST = "1.1.1.1";
 const DEFAULT_ORANGE_GATEWAY = "192.168.1.1";
 // Site distant supervisé à la demande (IP fixe, hors du LAN local) : même
 // traitement qu'une cible externe fixe (voir CLOUDFLARE_HOST).
-const REMOTE_HOST = "83.204.110.38";
+//
+// Redéfinissable par `REMOTE_HOST` dans .env : une cible qui ne répond plus
+// durablement maintient l'alerte globale allumée en permanence, et une alerte
+// qui ne s'éteint jamais cesse d'être lue. Pouvoir la changer — ou la pointer
+// ailleurs — sans toucher au code évite cette fatigue.
+const REMOTE_HOST = getEnv().remoteHost;
 
 // Journal des anomalies, EN MÉMOIRE et borné (voir anomalies.ts) : rien n'est
 // écrit sur disque, la liste repart vide au démarrage et le payload transporte

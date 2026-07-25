@@ -189,6 +189,26 @@ function parseOrangeGatewayIp(raw: string | undefined): string | null {
   return raw;
 }
 
+// REMOTE_HOST : troisième sonde réseau, un site distant hors du LAN. Sa
+// valeur par défaut est celle qu'observait le déploiement d'origine ; la
+// rendre configurable évite qu'une cible durablement muette maintienne
+// l'alerte globale allumée en permanence — une alerte qui ne s'éteint jamais
+// cesse d'être lue.
+//
+// IPv4 ou nom d'hôte : la sonde est un ping, les deux conviennent. On refuse
+// en revanche tout ce qui ressemble à une URL ou porte un caractère de
+// séparation, qui trahirait une confusion avec une adresse de service.
+function parseRemoteHost(raw: string | undefined): string {
+  const value = raw?.trim();
+  if (!value) return "83.204.110.38";
+  if (!/^[A-Za-z0-9.-]{1,253}$/.test(value) || value.startsWith("-") || value.endsWith("-")) {
+    throw new Error(
+      "REMOTE_HOST doit être une adresse IPv4 ou un nom d'hôte (sans schéma, port ni chemin).",
+    );
+  }
+  return value;
+}
+
 // Chemin de fichier : valeur par défaut si absente, sinon non vide après trim.
 function parsePath(
   raw: string | undefined,
@@ -292,6 +312,7 @@ export function parseEnv(source: EnvSource) {
     ollamaFallbackModel: source.OLLAMA_FALLBACK_MODEL ?? "qwen3.5:9b",
     // Si vide, auto-détectée via `route -n get default` (voir network.ts).
     orangeGatewayIp: parseOrangeGatewayIp(source.ORANGE_GATEWAY_IP),
+    remoteHost: parseRemoteHost(source.REMOTE_HOST),
     // null = relais push désactivé (voir parseNtfy) ; /api/notify le rapporte
     // alors comme « non configuré », jamais comme une panne.
     ntfy: parseNtfy(source),

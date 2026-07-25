@@ -37,6 +37,7 @@ describe("parseEnv", () => {
       ollamaUrl: "http://127.0.0.1:11434",
       ollamaFallbackModel: "qwen3.5:9b",
       orangeGatewayIp: "192.168.1.1",
+      remoteHost: "83.204.110.38",
       // Relais push absent de la source : « non configuré », pas une erreur
       // (voir parseNtfy et notify.test.ts pour les cas de configuration).
       ntfy: null,
@@ -198,5 +199,26 @@ describe("isAllowedBindHost", () => {
     expect(isAllowedBindHost("10.0.0.1")).toBe(false);
     expect(isAllowedBindHost("exemple.com")).toBe(false);
     expect(isAllowedBindHost("")).toBe(false);
+  });
+});
+
+describe("REMOTE_HOST", () => {
+  test("valeur par défaut quand la variable est absente ou vide", () => {
+    expect(parseEnv(baseSource()).remoteHost).toBe("83.204.110.38");
+    expect(parseEnv(baseSource({ REMOTE_HOST: "   " })).remoteHost).toBe("83.204.110.38");
+  });
+
+  test("accepte une IPv4 comme un nom d'hôte : la sonde est un ping", () => {
+    expect(parseEnv(baseSource({ REMOTE_HOST: "10.0.0.1" })).remoteHost).toBe("10.0.0.1");
+    expect(parseEnv(baseSource({ REMOTE_HOST: "exemple.fr" })).remoteHost).toBe("exemple.fr");
+  });
+
+  test("refuse ce qui trahit une confusion avec une adresse de service", () => {
+    // Un schéma, un port ou un chemin signalent qu'on a collé une URL là où
+    // une cible de ping est attendue : mieux vaut échouer au démarrage que
+    // sonder une chaîne qui ne résoudra jamais.
+    for (const mauvais of ["http://exemple.fr", "exemple.fr:443", "exemple.fr/a", "-exemple.fr", "exemple.fr-"]) {
+      expect(() => parseEnv(baseSource({ REMOTE_HOST: mauvais }))).toThrow(/REMOTE_HOST/);
+    }
   });
 });

@@ -67,6 +67,10 @@ cp .env.example .env
   (nécessaire pour le chat, distinct d'`AUTH_TOKEN`)
 - `BIND_HOST` — `127.0.0.1` en local, ou l'IP Tailscale du Mac mini
   (`tailscale ip -4`) pour un accès distant
+- `REMOTE_HOST` — troisième sonde réseau (site distant hors du LAN), défaut
+  `83.204.110.38`. **À changer si la cible ne répond plus durablement** : une
+  sonde en échec permanent maintient l'alerte globale allumée, et une alerte
+  qui ne s'éteint jamais cesse d'être lue.
 
 Le premier démarrage crée une identité d'appareil Ed25519
 (`data/gateway-device-identity.json`, non commitée) pour s'authentifier
