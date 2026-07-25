@@ -479,24 +479,24 @@ export default function App() {
           <ChatPanel chat={chat} active={tab === "chat"} />
         </div>
         <div hidden={tab !== "logs"} inert={tab !== "logs"} aria-hidden={tab !== "logs"}>
-          <section className="mb-6">
-            <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-emerald-300/80">
+          <section className="mb-3 sm:mb-6">
+            <p className="mb-2 hidden text-[10px] font-semibold uppercase tracking-[0.2em] text-emerald-300/80 sm:block">
               Diagnostic temps réel
             </p>
-            <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">Logs OpenClaw</h1>
-            <p className="mt-2 max-w-xl text-sm leading-6 text-[var(--text-secondary)]">
+            <h1 className="text-lg font-semibold tracking-tight sm:text-3xl">Logs OpenClaw</h1>
+            <p className="mt-2 hidden max-w-xl text-sm leading-6 text-[var(--text-secondary)] sm:block">
               Événements récents de la gateway, filtrés à la source et conservés uniquement dans cette vue.
             </p>
           </section>
           <LogsPanel token={token} active={tab === "logs"} />
         </div>
         <div hidden={tab !== "files"} inert={tab !== "files"} aria-hidden={tab !== "files"}>
-          <section className="mb-6">
-            <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-emerald-300/80">
+          <section className="mb-3 sm:mb-6">
+            <p className="mb-2 hidden text-[10px] font-semibold uppercase tracking-[0.2em] text-emerald-300/80 sm:block">
               Workspace de l'agent
             </p>
-            <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">Fichiers OpenClaw</h1>
-            <p className="mt-2 max-w-xl text-sm leading-6 text-[var(--text-secondary)]">
+            <h1 className="text-lg font-semibold tracking-tight sm:text-3xl">Fichiers OpenClaw</h1>
+            <p className="mt-2 hidden max-w-xl text-sm leading-6 text-[var(--text-secondary)] sm:block">
               Les fichiers auxquels l'agent a accès : lecture via la gateway, ajout depuis ce
               dashboard directement dans son workspace.
             </p>
