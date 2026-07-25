@@ -308,6 +308,20 @@ contournements** ; c'est bloqué sur l'activation des certificats HTTPS dans la
 console d'administration Tailscale (`tailscale cert` répond « your Tailscale
 account does not support getting TLS certs »).
 
+### Reconnexion immédiate : ne jamais doubler un flux
+
+Les quatre flux du front (statut, logs, notifications, chat) se relancent au
+retour du réseau ou de la visibilité. Le piège : abandonner la requête en
+cours puis rappeler `connect()` fait sortir l'ancienne en erreur, laquelle
+programme *sa* reconnexion — un flux de plus à chaque bascule d'onglet.
+Mesuré sur `useNotifications` avant correction : **4 bascules → 4 flux SSE
+parallèles**, chaque notification livrée quatre fois.
+
+Le motif retenu partout : un drapeau `waitingRetry`, vrai seulement pendant
+l'attente d'un délai de backoff. La relance immédiate n'agit que dans cet
+état, et **laisse tranquille une connexion en cours** — l'interrompre pour la
+relancer aussitôt ne gagne rien.
+
 ### `networkidle` n'arrive jamais
 
 Deux flux SSE et un WebSocket restent ouverts en permanence : toute attente de

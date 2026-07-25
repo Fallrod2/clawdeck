@@ -71,12 +71,22 @@ export function useNotifications(token: string | null) {
     let cancelled = false;
     let attempts = 0;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    // Vrai seulement pendant l'attente d'un délai de backoff. Même mécanisme
+    // que useStatusStream et useLogStream : il permet de relancer tout de
+    // suite au retour du réseau SANS jamais doubler une connexion déjà en
+    // cours, et sans avoir à interrompre une requête qui se porte bien.
+    let waitingRetry = false;
 
     function scheduleReconnect() {
+      if (cancelled) return;
       const delay = Math.min(RETRY_BASE_MS * 2 ** attempts, RETRY_MAX_MS);
       attempts += 1;
       clearTimeout(timer);
-      timer = setTimeout(connect, delay);
+      waitingRetry = true;
+      timer = setTimeout(() => {
+        waitingRetry = false;
+        connect();
+      }, delay);
     }
 
     function handleFrame(payload: unknown) {
@@ -141,19 +151,20 @@ export function useNotifications(token: string | null) {
         // coupure réseau ou abandon : la reconnexion s'en charge
       }
 
-      // Garde d'identité : `retryNow` abandonne la requête en cours PUIS
-      // rappelle connect() immédiatement. Sans cette comparaison, la sortie
-      // en erreur de la connexion abandonnée programmerait une reconnexion
-      // supplémentaire — deux flux ouverts en parallèle à chaque retour de
-      // visibilité ou de réseau.
+      // La connexion remplacée par une plus récente ne programme rien : sans
+      // cette garde, sa sortie en erreur ouvrirait un flux supplémentaire.
       if (abortRef.current !== controller) return;
       if (!cancelled && shouldRetry) scheduleReconnect();
     }
 
+    // Relance immédiate UNIQUEMENT si l'on attendait un délai de backoff. Une
+    // connexion en cours est laissée tranquille : l'interrompre pour la
+    // relancer aussitôt ne gagne rien et ouvrait un second flux à chaque
+    // bascule d'onglet (mesuré : 4 bascules → 4 flux parallèles).
     const retryNow = () => {
-      if (cancelled) return;
+      if (cancelled || !waitingRetry) return;
       clearTimeout(timer);
-      abortRef.current?.abort();
+      waitingRetry = false;
       connect();
     };
     const onVisibility = () => {
