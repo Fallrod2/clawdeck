@@ -697,7 +697,7 @@ export function ChatPanel({ chat, active }: { chat: ChatController; active: bool
             type="button"
             onClick={() => setSearchOpen((open) => !open)}
             aria-expanded={searchOpen}
-            className={`min-h-8 rounded-lg border px-2.5 text-2xs transition active:scale-[0.97] ${
+            className={`min-h-10 rounded-lg border px-2.5 text-2xs transition active:scale-[0.97] sm:min-h-8 ${
               searchOpen
                 ? "border-emerald-300/25 bg-emerald-300/10 text-emerald-200"
                 : "border-[var(--border-subtle)] bg-black/20 text-[var(--text-secondary)] hover:bg-white/6"
@@ -820,7 +820,7 @@ export function ChatPanel({ chat, active }: { chat: ChatController; active: bool
               type="button"
               onClick={abort}
               disabled={abortPending || wsState !== "open"}
-              className="min-h-7 rounded-md border border-[var(--border-strong)] bg-black/25 px-3 text-xs text-[var(--text-primary)] transition hover:bg-white/8 active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-45"
+              className="min-h-10 rounded-md border border-[var(--border-strong)] bg-black/25 px-3 sm:min-h-7 text-xs text-[var(--text-primary)] transition hover:bg-white/8 active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-45"
             >
               {abortPending ? "Interruption demandée…" : "Interrompre"}
             </button>
@@ -884,7 +884,7 @@ export function ChatPanel({ chat, active }: { chat: ChatController; active: bool
               <button
                 type="submit"
                 disabled={!canSend}
-                className="min-h-8 rounded-lg bg-emerald-300 px-4 text-xs font-semibold text-[var(--text-on-accent)] transition hover:bg-emerald-200 active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-35"
+                className="min-h-10 rounded-lg bg-emerald-300 px-4 text-xs font-semibold text-[var(--text-on-accent)] transition hover:bg-emerald-200 active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-35 sm:min-h-8"
               >
                 Envoyer
               </button>

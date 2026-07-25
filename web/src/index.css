@@ -95,7 +95,12 @@
   --border-strong: rgba(255, 255, 255, 0.14);
   --text-primary: #eef1f0;
   --text-secondary: #a4aaa8;
-  --text-muted: #717876;
+  /* Relevé de #717876 le 2026-07-25 : l'ancienne valeur plafonnait à 4,37:1
+     sur le canvas et tombait à 3,92:1 sur une surface surélevée — sous le
+     seuil WCAG AA de 4,5. Mesuré, pas estimé (voir scripts/a11y.ts). La
+     nouvelle donne 5,01:1 au pire, et se lit sur un téléphone en plein jour
+     sans cesser d'être subordonnée au texte secondaire (7,5:1). */
+  --text-muted: #828a88;
   --text-on-accent: #07100d;
   --accent: #65d6bd;
   --accent-soft: rgba(101, 214, 189, 0.1);
