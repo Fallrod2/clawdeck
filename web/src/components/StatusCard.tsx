@@ -100,7 +100,12 @@ export function StatusCard({
         <span className="text-[10px] font-medium uppercase tracking-[0.16em] text-[var(--text-muted)]">
           {metricLabel ?? "Latence"}
         </span>
-        <span className="font-mono text-sm tabular-nums text-[var(--text-secondary)]">
+        {/* Sans-serif et non monospace : ce créneau porte aussi bien « 11 ms »
+            que « Il y a 4 min » ou « openai ». En monospace, les phrases se
+            délitent (IBM Plex Mono est large) pour un alignement dont une
+            valeur isolée n'a aucun besoin. tabular-nums garde les chiffres
+            stables. */}
+        <span className="text-sm font-medium tabular-nums text-[var(--text-secondary)]">
           {metricValue ?? (latencyMs != null ? `${Math.round(latencyMs)} ms` : "—")}
         </span>
       </div>

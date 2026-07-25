@@ -68,7 +68,11 @@ système) : `IBM Plex Sans Variable` pour l'interface et le contenu,
   deux isolément.
 - `font-variant-numeric: tabular-nums` global : heures, latences et compteurs
   ne doivent pas gigoter en changeant de valeur.
-- Monospace pour heures, latences, identifiants, commandes et payloads.
+- Monospace là où la largeur fixe SERT : lignes de log, payloads, chemins,
+  code, et les heures d'une colonne de conversation. Pas pour une valeur
+  isolée — « Il y a 4 min » ou « 11 ms » dans une carte se lisent mieux en
+  sans-serif, `tabular-nums` suffisant à stabiliser les chiffres. IBM Plex
+  Mono est large : en abuser délite les phrases.
 - Barème de tailles : `text-2xs` (11 px, micro-libellés) et `text-chat`
   (15 px / 1,65, corps de conversation) sont définis dans `@theme`. Ne pas
   réintroduire de `text-[10px]` ou `text-[11px]` ponctuels.

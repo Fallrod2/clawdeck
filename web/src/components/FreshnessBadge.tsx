@@ -23,7 +23,7 @@ export function FreshnessBadge({
     return (
       <span
         aria-live="off"
-        className={`inline-flex items-center gap-1.5 font-mono text-[10px] tabular-nums text-[var(--text-muted)] ${className}`}
+        className={`inline-flex items-center gap-1.5 text-2xs text-[var(--text-muted)] ${className}`}
       >
         <span aria-hidden>…</span>
         aucune mesure
@@ -41,7 +41,7 @@ export function FreshnessBadge({
     <span
       aria-live="off"
       title={`Dernière mesure à ${new Date(timestamp).toLocaleTimeString("fr-FR")}`}
-      className={`inline-flex items-center gap-1.5 font-mono text-[10px] tabular-nums ${toneClass} ${className}`}
+      className={`inline-flex items-center gap-1.5 text-2xs ${toneClass} ${className}`}
     >
       {level === "fresh" ? (
         <span className="h-1 w-1 shrink-0 rounded-full bg-current opacity-70" aria-hidden />
