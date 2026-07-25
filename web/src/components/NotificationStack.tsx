@@ -128,7 +128,16 @@ export function NotificationStack({
     // `pointer-events-none` sur le conteneur, réactivé sur chaque carte : la
     // pile ne doit jamais intercepter un clic destiné au contenu derrière elle.
     <div
-      className="pointer-events-none fixed inset-x-0 bottom-0 z-40 flex flex-col items-center gap-2 p-3 sm:inset-x-auto sm:right-4 sm:items-end"
+      // Marges de zone sûre reprises ICI : le padding posé sur `body`
+      // (index.css) ne protège que le flux normal, un élément `fixed` est
+      // positionné par rapport au viewport et passerait donc SOUS la barre
+      // d'accueil de l'iPhone.
+      style={{
+        paddingBottom: "calc(0.75rem + env(safe-area-inset-bottom, 0px))",
+        paddingLeft: "calc(0.75rem + env(safe-area-inset-left, 0px))",
+        paddingRight: "calc(0.75rem + env(safe-area-inset-right, 0px))",
+      }}
+      className="pointer-events-none fixed inset-x-0 bottom-0 z-40 flex flex-col items-center gap-2 pt-3 sm:inset-x-auto sm:right-4 sm:items-end"
       aria-label="Notifications"
     >
       {dropped > 0 && (

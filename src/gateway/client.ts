@@ -72,6 +72,10 @@ export interface GatewayClientOptions {
   // Fallback du watchdog de vivacité quand la gateway n'annonce pas
   // policy.tickIntervalMs (les tests le raccourcissent).
   tickIntervalFallbackMs?: number;
+  // Délai des requêtes RPC qui n'en imposent pas un explicitement. Injectable
+  // pour éprouver une gateway qui répond APRÈS l'échéance sans payer 5 s de
+  // mur par cas (voir gateway-degradee.test.ts).
+  requestTimeoutMs?: number;
 }
 
 export class GatewayClient extends EventEmitter {
@@ -111,6 +115,7 @@ export class GatewayClient extends EventEmitter {
   private readonly socketFactory: (url: string) => WebSocket;
   private readonly handshakeTimeoutMs: number;
   private readonly tickIntervalFallbackMs: number;
+  private readonly requestTimeoutMs: number;
 
   constructor(
     private wsUrl: string,
@@ -123,6 +128,7 @@ export class GatewayClient extends EventEmitter {
     this.socketFactory = options.socketFactory ?? ((url) => new WebSocket(url));
     this.handshakeTimeoutMs = options.handshakeTimeoutMs ?? HANDSHAKE_TIMEOUT_MS;
     this.tickIntervalFallbackMs = options.tickIntervalFallbackMs ?? TICK_INTERVAL_FALLBACK_MS;
+    this.requestTimeoutMs = options.requestTimeoutMs ?? REQUEST_TIMEOUT_MS;
   }
 
   start() {
@@ -227,7 +233,22 @@ export class GatewayClient extends EventEmitter {
       } catch {
         return;
       }
-      this.handleMessage(msg);
+      // `null` et les scalaires parsent SANS lever : seul un objet peut être
+      // interprété comme une frame.
+      if (!msg || typeof msg !== "object") return;
+      try {
+        this.handleMessage(msg);
+      } catch (error) {
+        // Filet de sécurité, et non confort : une exception levée dans
+        // `ws.onmessage` TERMINE le processus Bun. L'émetteur est ce qui
+        // occupe le port de la gateway — GATEWAY_URL mal réglée, autre
+        // service, gateway boguée — et ce chemin est PRÉ-AUTHENTIFICATION.
+        // Une seule frame inattendue suffisait donc à tuer le dashboard, qui
+        // restait mort tant que personne ne le relançait.
+        logError("gateway", "frame ignorée : traitement impossible", {
+          raison: error instanceof Error ? error.message : String(error),
+        });
+      }
     };
 
     ws.onclose = () => {
@@ -318,7 +339,12 @@ export class GatewayClient extends EventEmitter {
     if (msg.type === "event") this.trackEventSeq(msg);
 
     if (msg.type === "event" && msg.event === "connect.challenge") {
-      this.sendConnect(msg.payload.nonce);
+      // Le nonce est signé et renvoyé tel quel : sans lui, il n'y a rien à
+      // faire. Une frame de défi amputée de sa charge utile déréférençait
+      // `msg.payload.nonce` et tuait le processus.
+      const nonce = msg.payload?.nonce;
+      if (typeof nonce !== "string" || !nonce) return;
+      this.sendConnect(nonce);
       return;
     }
 
@@ -559,7 +585,7 @@ export class GatewayClient extends EventEmitter {
   private request<T = unknown>(
     method: string,
     params: unknown,
-    timeoutMs = REQUEST_TIMEOUT_MS,
+    timeoutMs = this.requestTimeoutMs,
   ): Promise<T> {
     if (!this.connected) return Promise.reject(new Error("gateway not connected"));
     // Gating de découverte : rejet immédiat plutôt qu'un aller-retour voué au

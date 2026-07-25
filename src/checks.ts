@@ -6,9 +6,16 @@ export interface HttpCheckResult {
   error?: string;
 }
 
+// Délai au-delà duquel une dépendance qui traîne est déclarée en échec. Les
+// sondes tournent dans un même Promise.all (status.ts) : sans borne, une seule
+// dépendance muette figerait tout le cycle de statut.
+// Paramétrable UNIQUEMENT pour les tests — éprouver ce délai coûterait sinon
+// 3 s de mur par cas (même précédent que relayToNtfy/timeoutMs, notify.ts).
+const CHECK_TIMEOUT_MS = 3000;
+
 async function timedFetch(
   url: string,
-  timeoutMs = 3000,
+  timeoutMs = CHECK_TIMEOUT_MS,
 ): Promise<{ res: Response; latencyMs: number }> {
   const start = performance.now();
   const res = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
@@ -16,9 +23,12 @@ async function timedFetch(
 }
 
 /** Vérifie le endpoint de liveness HTTP dédié de la gateway OpenClaw. */
-export async function checkGateway(url: string): Promise<HttpCheckResult> {
+export async function checkGateway(
+  url: string,
+  timeoutMs = CHECK_TIMEOUT_MS,
+): Promise<HttpCheckResult> {
   try {
-    const { res, latencyMs } = await timedFetch(new URL("/health", url).toString());
+    const { res, latencyMs } = await timedFetch(new URL("/health", url).toString(), timeoutMs);
     return { ok: res.ok, latencyMs: Math.round(latencyMs) };
   } catch (err) {
     return { ok: false, latencyMs: null, error: (err as Error).message };
@@ -38,10 +48,12 @@ export function isOllamaModelReady(models: string[], fallbackModel: string): boo
 export async function checkOllama(
   url: string,
   fallbackModel: string,
+  timeoutMs = CHECK_TIMEOUT_MS,
 ): Promise<OllamaCheckResult> {
   try {
     const { res, latencyMs } = await timedFetch(
       `${url.replace(/\/$/, "")}/api/tags`,
+      timeoutMs,
     );
     if (!res.ok) {
       return {
