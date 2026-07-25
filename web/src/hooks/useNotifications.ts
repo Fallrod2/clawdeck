@@ -141,6 +141,12 @@ export function useNotifications(token: string | null) {
         // coupure réseau ou abandon : la reconnexion s'en charge
       }
 
+      // Garde d'identité : `retryNow` abandonne la requête en cours PUIS
+      // rappelle connect() immédiatement. Sans cette comparaison, la sortie
+      // en erreur de la connexion abandonnée programmerait une reconnexion
+      // supplémentaire — deux flux ouverts en parallèle à chaque retour de
+      // visibilité ou de réseau.
+      if (abortRef.current !== controller) return;
       if (!cancelled && shouldRetry) scheduleReconnect();
     }
 
