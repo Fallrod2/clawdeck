@@ -198,6 +198,23 @@ function readOutboundMessage(tool: ToolCall): { channel: string; to: string } | 
   }
 }
 
+// Textes de remplacement posés par OpenClaw à la place d'un contenu qu'il ne
+// peut pas retranscrire. Ce ne sont PAS les mots de l'utilisateur : les
+// afficher tels quels mettait de l'anglais brut dans une interface française,
+// et les faisait passer pour un message écrit. Correspondance exacte
+// uniquement — hors de question de réécrire du contenu réel.
+const SYSTEM_PLACEHOLDERS: Record<string, string> = {
+  "[User sent media without caption]": "média envoyé, sans légende",
+  "[Image]": "image envoyée",
+  "[Audio]": "message vocal envoyé",
+  "[Video]": "vidéo envoyée",
+  "[Document]": "document envoyé",
+};
+
+function readPlaceholder(text: string): string | null {
+  return SYSTEM_PLACEHOLDERS[text.trim()] ?? null;
+}
+
 function formatDuration(ms: number): string {
   if (ms < 1_000) return `${ms} ms`;
   if (ms < 60_000) return `${(ms / 1_000).toFixed(1)} s`;
@@ -311,6 +328,18 @@ function MessageBody({ message }: { message: ChatMessage }) {
   // Réponse en cours d'écriture ET déjà du texte : le curseur clignotant
   // prend le relais des trois points, qui ne couvrent que le texte vide.
   const streaming = message.pending && Boolean(message.text);
+
+  // Contenu non retranscriptible : rendu en note, pas en message. La forme
+  // dit à elle seule que ce ne sont pas les mots de l'expéditeur.
+  const placeholder = readPlaceholder(message.text);
+  if (placeholder) {
+    return (
+      <p className="flex items-center gap-1.5 py-0.5 text-xs italic text-[var(--text-muted)]">
+        <span aria-hidden>◇</span>
+        {placeholder}
+      </p>
+    );
+  }
 
   if (!message.text) {
     return message.pending ? (
