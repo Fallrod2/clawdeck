@@ -13,6 +13,23 @@ export interface HttpCheckResult {
 // 3 s de mur par cas (même précédent que relayToNtfy/timeoutMs, notify.ts).
 const CHECK_TIMEOUT_MS = 3000;
 
+// Cause d'échec destinée à l'OPÉRATEUR, pas au développeur. Les messages
+// d'exception bruts recopiaient du code source dans l'interface — par exemple
+// « ((await res.json()).models ?? []).map is not a function » sur une réponse
+// Ollama malformée. Une console d'exploitation doit dire ce qui ne va pas,
+// pas montrer ses entrailles ; le détail complet reste dans le journal.
+function causeLisible(err: unknown): string {
+  const nom = err instanceof Error ? err.name : "";
+  if (nom === "TimeoutError" || nom === "AbortError") return "délai dépassé";
+  if (err instanceof TypeError) {
+    // `fetch` lève un TypeError pour toute la famille « connexion
+    // impossible » : hôte inconnu, port fermé, TLS refusé.
+    return "connexion impossible";
+  }
+  if (err instanceof SyntaxError) return "réponse illisible (JSON invalide)";
+  return "réponse inattendue";
+}
+
 async function timedFetch(
   url: string,
   timeoutMs = CHECK_TIMEOUT_MS,
@@ -29,9 +46,14 @@ export async function checkGateway(
 ): Promise<HttpCheckResult> {
   try {
     const { res, latencyMs } = await timedFetch(new URL("/health", url).toString(), timeoutMs);
-    return { ok: res.ok, latencyMs: Math.round(latencyMs) };
+    // Un statut HTTP en échec doit dire LEQUEL : sans cause, la carte affiche
+    // une pastille rouge muette, ce qui n'est pas un diagnostic. checkOllama
+    // le faisait déjà, checkGateway non.
+    return res.ok
+      ? { ok: true, latencyMs: Math.round(latencyMs) }
+      : { ok: false, latencyMs: Math.round(latencyMs), error: `HTTP ${res.status}` };
   } catch (err) {
-    return { ok: false, latencyMs: null, error: (err as Error).message };
+    return { ok: false, latencyMs: null, error: causeLisible(err) };
   }
 }
 
@@ -50,27 +72,46 @@ export async function checkOllama(
   fallbackModel: string,
   timeoutMs = CHECK_TIMEOUT_MS,
 ): Promise<OllamaCheckResult> {
+  let latencyMs: number | null = null;
   try {
-    const { res, latencyMs } = await timedFetch(
-      `${url.replace(/\/$/, "")}/api/tags`,
-      timeoutMs,
-    );
-    if (!res.ok) {
-      return {
-        ok: false,
-        latencyMs: Math.round(latencyMs),
-        error: `HTTP ${res.status}`,
-      };
+    const reponse = await timedFetch(`${url.replace(/\/$/, "")}/api/tags`, timeoutMs);
+    // Mémorisée AVANT toute lecture du corps : sur un corps illisible, la
+    // latence était perdue alors que l'aller-retour avait bien été mesuré —
+    // or c'est précisément le champ qui distingue « injoignable » de
+    // « répond mal ».
+    latencyMs = Math.round(reponse.latencyMs);
+    if (!reponse.res.ok) {
+      return { ok: false, latencyMs, error: `HTTP ${reponse.res.status}` };
     }
-    const data = (await res.json()) as { models?: { name: string }[] };
-    const models = (data.models ?? []).map((m) => m.name);
+
+    const data = (await reponse.res.json()) as unknown;
+    // Un corps qui n'est pas un objet (`null`, un tableau, un scalaire) n'est
+    // pas une réponse Ollama : rien à en déduire, on le dit.
+    if (!data || typeof data !== "object" || Array.isArray(data)) {
+      return { ok: false, latencyMs, error: "réponse illisible (objet attendu)" };
+    }
+    const brut = (data as { models?: unknown }).models;
+    // Schéma inattendu : on ne CONCLUT pas. Rendre une liste vide reviendrait
+    // à annoncer « modèle de repli absent », ce qui est un diagnostic — alors
+    // qu'on ignore tout de l'état réel. L'échec dit la vraie raison.
+    if (brut !== undefined && !Array.isArray(brut)) {
+      return { ok: false, latencyMs, error: "réponse illisible (champ « models » inattendu)" };
+    }
+    // Le contrat annonce `string[]` : on le TIENT. Une liste contenant des
+    // objets sans `name` ou des nombres produisait auparavant des `null` et
+    // des entiers dans un tableau typé string.
+    const models = Array.isArray(brut)
+      ? brut
+          .map((m) => (m as { name?: unknown } | null)?.name)
+          .filter((name): name is string => typeof name === "string" && name.length > 0)
+      : [];
     return {
       ok: true,
-      latencyMs: Math.round(latencyMs),
+      latencyMs,
       models,
       fallbackModelReady: isOllamaModelReady(models, fallbackModel),
     };
   } catch (err) {
-    return { ok: false, latencyMs: null, error: (err as Error).message };
+    return { ok: false, latencyMs, error: causeLisible(err) };
   }
 }

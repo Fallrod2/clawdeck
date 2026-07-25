@@ -111,8 +111,11 @@ export function unavailableOpenClawRuntime(
   return {
     connected: false,
     healthy: false,
-    version: source.version,
-    uptimeMs: source.uptimeMs,
+    // Validés comme tout le reste : ce sont les deux seuls champs qui
+    // échappaient à stringValue/numberValue, alors qu ils viennent du
+    // hello-ok d une gateway qu on ne contrôle pas.
+    version: stringValue(source.version),
+    uptimeMs: numberValue(source.uptimeMs),
     healthTimestamp: null,
     healthDurationMs: null,
     provider: null,
@@ -237,8 +240,11 @@ export async function readOpenClawRuntime(
   return {
     connected: true,
     healthy: booleanValue(health?.ok),
-    version: source.version,
-    uptimeMs: source.uptimeMs,
+    // Validés comme tout le reste : ce sont les deux seuls champs qui
+    // échappaient à stringValue/numberValue, alors qu ils viennent du
+    // hello-ok d une gateway qu on ne contrôle pas.
+    version: stringValue(source.version),
+    uptimeMs: numberValue(source.uptimeMs),
     healthTimestamp: numberValue(health?.ts),
     healthDurationMs: numberValue(health?.durationMs),
     provider,

@@ -252,11 +252,14 @@ export class GatewayClient extends EventEmitter {
     };
 
     ws.onclose = () => {
-      // Ne désarme les watchdogs que s'il s'agit bien du socket courant.
-      if (this.ws === ws) {
-        this.clearHandshakeTimer();
-        this.clearTickTimer();
-      }
+      // Garde d'identité étendue à TOUT le corps, et plus aux seuls watchdogs.
+      // Sans elle, la fermeture tardive d'un socket déjà remplacé effaçait
+      // l'état de la connexion NEUVE — clé de session, méthodes annoncées,
+      // requêtes en vol — et programmait une reconnexion parallèle. Les deux
+      // watchdogs se prémunissaient déjà de ce cas ; le reste, non.
+      if (this.ws !== ws) return;
+      this.clearHandshakeTimer();
+      this.clearTickTimer();
       const wasConnected = this.connected;
       this.connected = false;
       this.mainSessionKey = null;
@@ -514,9 +517,16 @@ export class GatewayClient extends EventEmitter {
       ? scopes.filter((s: unknown): s is string => typeof s === "string")
       : null;
 
-    this.mainSessionKey = msg.payload?.snapshot?.sessionDefaults?.mainSessionKey ?? null;
-    this.serverVersion = msg.payload?.server?.version ?? null;
-    this.serverUptimeMs = msg.payload?.snapshot?.uptimeMs ?? null;
+    // Typage vérifié et non supposé : une clé de session non-chaîne partait
+    // telle quelle dans les paramètres de chat.send et faisait échouer
+    // SILENCIEUSEMENT l'appariement de sessions.list — un envoi qui ne
+    // rejoignait jamais sa session, sans erreur visible.
+    const cleSession = msg.payload?.snapshot?.sessionDefaults?.mainSessionKey;
+    this.mainSessionKey = typeof cleSession === "string" && cleSession ? cleSession : null;
+    const version = msg.payload?.server?.version;
+    this.serverVersion = typeof version === "string" && version ? version : null;
+    const uptime = msg.payload?.snapshot?.uptimeMs;
+    this.serverUptimeMs = typeof uptime === "number" && Number.isFinite(uptime) ? uptime : null;
     this.armTickWatchdog();
     this.emit("status", { connected: true });
     this.setupSession().catch(() => {
