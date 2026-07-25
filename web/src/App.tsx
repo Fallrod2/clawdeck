@@ -10,6 +10,8 @@ import { FilesPanel } from "./components/FilesPanel";
 import { useStatusStream } from "./hooks/useStatusStream";
 import { usePingHistory } from "./hooks/usePingHistory";
 import { useChat } from "./hooks/useChat";
+import { useNotifications } from "./hooks/useNotifications";
+import { NotificationStack } from "./components/NotificationStack";
 import { useNow, STALE_AFTER_MS } from "./hooks/useNow";
 import { FreshnessBadge } from "./components/FreshnessBadge";
 import { getToken, setToken as saveToken, clearToken } from "./lib/token";
@@ -97,6 +99,9 @@ export default function App() {
   // Le chat vit au niveau App : sa connexion WS et son transcript survivent
   // au changement d'onglet (le panneau est masqué, jamais démonté).
   const chat = useChat(token);
+  // Notifications poussées par OpenClaw (POST /api/notify) : affichées puis
+  // oubliées, aucun historique — voir hooks/useNotifications.ts.
+  const { notifications, dropped, dismiss, clearDropped } = useNotifications(token);
 
   useEffect(() => {
     // Même garde que le flux SSE : on ne purge le token stocké que si c'est
@@ -488,6 +493,15 @@ export default function App() {
           <FilesPanel token={token} active={tab === "files"} />
         </div>
       </main>
+
+      {/* Hors du flux de la page : les notifications concernent l'ensemble du
+          dashboard, pas l'onglet ouvert. */}
+      <NotificationStack
+        notifications={notifications}
+        dropped={dropped}
+        onDismiss={dismiss}
+        onClearDropped={clearDropped}
+      />
     </div>
   );
 }
