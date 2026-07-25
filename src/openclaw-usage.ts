@@ -260,6 +260,10 @@ export function normalizeQuotaUsage(payload: unknown): OpenClawQuotaUsage {
 }
 
 /** Normalise la charge de `usage.cost`. Fonction totale, comme ci-dessus. */
+function positiveDays(value: number | null): number | null {
+  return value !== null && value > 0 ? value : null;
+}
+
 export function normalizeCostUsage(payload: unknown, windowDays: number): OpenClawCostUsage {
   const root = record(payload);
   const totals = record(root?.totals);
@@ -286,7 +290,10 @@ export function normalizeCostUsage(payload: unknown, windowDays: number): OpenCl
     state,
     // La fenêtre annoncée par OpenClaw prime sur celle qu'on a demandée : lui
     // seul sait ce qu'il a réellement couvert.
-    windowDays: numberValue(root?.days) ?? windowDays,
+    // Une fenêtre négative ou nulle annoncée par la gateway serait affichée
+    // telle quelle (« jetons sur -3 jours ») : on retombe alors sur la
+    // fenêtre demandée, seule valeur dont on soit sûr.
+    windowDays: positiveDays(numberValue(root?.days)) ?? windowDays,
     totalCost,
     totalTokens,
     inputTokens: numberValue(totals?.input) ?? 0,

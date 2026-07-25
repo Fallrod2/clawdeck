@@ -195,11 +195,18 @@ export async function readOpenClawRuntime(
   const models = Array.isArray(modelsPayload?.models)
     ? modelsPayload.models.map(record).filter(Boolean)
     : [];
-  const modelEntry = models.find((entry) => {
-    const provider = stringValue(entry?.provider);
-    const id = stringValue(entry?.id);
-    return id === selected.model && (!selected.provider || provider === selected.provider);
-  });
+  // Le modèle actif doit être CONNU pour qu'on cherche sa fiche. Sans cette
+  // garde, `selected.model` valant null appariait n'importe quelle entrée du
+  // catalogue dont l'`id` était inexploitable (`null === null`), et l'on
+  // adoptait son `provider` et sa disponibilité — une affirmation tirée d'une
+  // coïncidence de valeurs nulles.
+  const modelEntry = selected.model
+    ? models.find((entry) => {
+        const provider = stringValue(entry?.provider);
+        const id = stringValue(entry?.id);
+        return id === selected.model && (!selected.provider || provider === selected.provider);
+      })
+    : undefined;
   const provider = selected.provider ?? stringValue(modelEntry?.provider) ?? configured.provider;
 
   const channelMap = record(channels?.channels);
