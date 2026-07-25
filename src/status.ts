@@ -1,6 +1,6 @@
 // src/status.ts — sondes de production et payload partagé du health panel.
 
-import { env } from "./env";
+import { getEnv } from "./env";
 import { checkGateway, checkOllama, type HttpCheckResult, type OllamaCheckResult } from "./checks";
 import { insertPing } from "./db";
 import { detectDefaultGateway, ping, type PingResult } from "./network";
@@ -28,13 +28,13 @@ export async function collectStatus(
   openclaw: OpenClawRuntimeStatus,
 ): Promise<StatusPayload> {
   const orangeGatewayIp =
-    env.orangeGatewayIp ??
+    getEnv().orangeGatewayIp ??
     (await detectDefaultGateway()) ??
     DEFAULT_ORANGE_GATEWAY;
 
   const [gateway, ollama, cloudflarePing, orangePing, remotePing] = await Promise.all([
-    checkGateway(env.gatewayUrl),
-    checkOllama(env.ollamaUrl, env.ollamaFallbackModel),
+    checkGateway(getEnv().gatewayUrl),
+    checkOllama(getEnv().ollamaUrl, getEnv().ollamaFallbackModel),
     ping(CLOUDFLARE_HOST),
     ping(orangeGatewayIp),
     ping(REMOTE_HOST),

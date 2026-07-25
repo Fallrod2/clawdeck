@@ -8,6 +8,7 @@
 // connexion comme un client navigateur et exige un pairing manuel).
 
 import { EventEmitter } from "node:events";
+import { logError } from "../log";
 import { loadOrCreateDeviceIdentity, publicKeyWireFormat, signPayload, type DeviceIdentity } from "./device-identity";
 import { buildDeviceAuthPayloadV3 } from "./protocol";
 
@@ -424,7 +425,7 @@ export class GatewayClient extends EventEmitter {
         const message =
           `authentification refusée par la gateway (${code}) : ${guidance} ` +
           "puis redémarrer clawdeck — reconnexion automatique suspendue";
-        console.error(`[gateway] ${message}`);
+        logError("gateway", message, { code });
         this.emit("status", { connected: false, error: message });
         this.ws?.close(1008, "connect failed");
         return;
@@ -451,9 +452,10 @@ export class GatewayClient extends EventEmitter {
       protocol > MAX_PROTOCOL_VERSION
     ) {
       const label = typeof protocol === "number" ? `v${protocol}` : String(protocol);
-      console.error(
-        `[gateway] protocole négocié ${label} hors plage supportée ` +
-          `[${MIN_PROTOCOL_VERSION}, ${MAX_PROTOCOL_VERSION}] — fermeture`,
+      logError(
+        "gateway",
+        `protocole négocié hors plage supportée [${MIN_PROTOCOL_VERSION}, ${MAX_PROTOCOL_VERSION}] — fermeture`,
+        { protocole: label },
       );
       this.emit("status", { connected: false, error: `protocole gateway ${label} non supporté` });
       this.ws?.close();

@@ -5,8 +5,15 @@ import { Hono } from "hono";
 import { serveStatic, upgradeWebSocket, websocket } from "hono/bun";
 import { streamSSE } from "hono/streaming";
 import type { WSContext } from "hono/ws";
-import { env } from "./env";
-import { safeTokenEqual, parseHours, MAX_CHAT_TEXT_LENGTH } from "./validate";
+import { getEnv } from "./env";
+import { safeTokenEqual, parseHours, isValidBase64, MAX_CHAT_TEXT_LENGTH } from "./validate";
+import {
+  apiBearerAuth,
+  healthz,
+  HEALTHZ_PATH,
+  securityHeaders,
+} from "./security";
+import { createStateLogger, logError, logInfo } from "./log";
 import { closeDatabase, pruneOldPings, getPingHistoryBucketed } from "./db";
 import { GatewayClient } from "./gateway/client";
 import { collectStatus, type StatusPayload } from "./status";
@@ -20,38 +27,72 @@ import {
 } from "./openclaw-status";
 
 const POLL_INTERVAL_MS = 5000;
+// Délai laissé à la première connexion gateway avant de la déclarer
+// indisponible dans le journal : plus long que le watchdog de handshake du
+// client (10 s), donc au moins une tentative complète a eu lieu.
+const GATEWAY_STARTUP_GRACE_MS = 15_000;
 
-const app = new Hono();
-const gateway = new GatewayClient(env.gatewayWsUrl, env.gatewayAuthToken, env.gatewayDeviceIdentityPath);
+// `app` et `gateway` sont exportés pour les tests d'intégration des routes
+// (index.test.ts), qui exercent l'app via app.request() en substituant les
+// accès gateway — le démarrage réel reste réservé à `import.meta.main` (bas
+// de fichier), donc importer ce module n'ouvre ni socket, ni port, ni base.
+export const app = new Hono();
+export const gateway = new GatewayClient(getEnv().gatewayWsUrl, getEnv().gatewayAuthToken, getEnv().gatewayDeviceIdentityPath);
 const logTailer = new LogTailer(gateway);
-const openclawCollector = new StatusCollector(() => readOpenClawRuntime(gateway), {
+
+// Journaux d'état : seules les bascules sont écrites, pas chaque cycle
+// (voir createStateLogger). Les sondes partent de l'état nominal — leur
+// succès au démarrage n'est pas un événement, leur premier échec si.
+const gatewayLog = createStateLogger({
+  scope: "gateway",
+  ok: "connexion établie",
+  failed: "connexion indisponible",
+});
+const openclawProbeLog = createStateLogger({
+  scope: "openclaw",
+  ok: "sonde rétablie",
+  failed: "sonde en échec",
+  initialOk: true,
+});
+const statusProbeLog = createStateLogger({
+  scope: "status",
+  ok: "sonde rétablie",
+  failed: "sonde en échec",
+  initialOk: true,
+});
+
+const openclawCollector = new StatusCollector(async () => {
+  const runtime = await readOpenClawRuntime(gateway);
+  openclawProbeLog.ok();
+  return runtime;
+}, {
   intervalMs: 15_000,
-  onError: (error) => console.error(`[openclaw] collection failed: ${error.message}`),
+  onError: (error) => openclawProbeLog.failed(error.message),
 });
-const statusCollector = new StatusCollector(() => collectStatus(
-  gateway.isConnected
-    ? openclawCollector.current ?? unavailableOpenClawRuntime(gateway, "OpenClaw status pending")
-    : unavailableOpenClawRuntime(gateway),
-), {
+const statusCollector = new StatusCollector(async () => {
+  const payload = await collectStatus(
+    gateway.isConnected
+      ? openclawCollector.current ?? unavailableOpenClawRuntime(gateway, "OpenClaw status pending")
+      : unavailableOpenClawRuntime(gateway),
+  );
+  statusProbeLog.ok();
+  return payload;
+}, {
   intervalMs: POLL_INTERVAL_MS,
-  onError: (error) => console.error(`[status] collection failed: ${error.message}`),
+  onError: (error) => statusProbeLog.failed(error.message),
 });
+
+// En-têtes de sécurité sur TOUTES les réponses — front buildé, API, 401
+// compris : ils sont posés avant l'auth pour qu'une réponse d'erreur reste
+// elle aussi protégée (voir security.ts).
+app.use("*", securityHeaders());
 
 // Auth bearer sur toute l'API (token depuis .env, jamais commité).
-// Exception : /api/chat/ws, dont le handshake WS ne peut pas poser de header
-// (voir plus bas, auth par première frame à la place).
-app.use("/api/*", async (c, next) => {
-  if (c.req.path === "/api/chat/ws") {
-    await next();
-    return;
-  }
-  const header = c.req.header("Authorization");
-  const token = header?.startsWith("Bearer ") ? header.slice(7) : null;
-  if (!safeTokenEqual(token, env.authToken)) {
-    return c.json({ error: "unauthorized" }, 401);
-  }
-  await next();
-});
+// Les exceptions (handshake WS, sonde de vie) sont listées et justifiées
+// dans security.ts — un seul endroit à relire pour savoir ce qui est public.
+app.use("/api/*", apiBearerAuth(getEnv().authToken));
+
+app.get(HEALTHZ_PATH, healthz);
 
 // Chaque client reçoit le dernier snapshot puis les mises à jour de l'unique
 // boucle backend. Une connexion SSE ne déclenche jamais elle-même de sonde.
@@ -187,9 +228,8 @@ app.get("/api/pings/history", (c) => {
   });
 });
 
-// Rétention 7 jours (voir RETENTION_MS dans db.ts).
-pruneOldPings();
-const pruneTimer = setInterval(pruneOldPings, 60 * 60 * 1000);
+// Rétention 7 jours (voir RETENTION_MS dans db.ts) ; armée au démarrage.
+let pruneTimer: ReturnType<typeof setInterval> | null = null;
 
 // --- Chat (phase 2) : relais WS entre le front et la gateway OpenClaw ---
 // Le dashboard ne maintient qu'UNE connexion vers la gateway (auth par
@@ -212,6 +252,10 @@ function broadcast(msg: unknown) {
 }
 
 gateway.on("status", (status: { connected: boolean; error?: string }) => {
+  // La déconnexion provoquée par notre propre arrêt n'est pas une panne : la
+  // journaliser en warn ferait sonner une alerte à chaque redémarrage.
+  if (status.connected) gatewayLog.ok();
+  else if (!shuttingDown) gatewayLog.failed(status.error);
   broadcast({ type: "gateway-status", ...status });
   openclawCollector.refresh();
 });
@@ -224,11 +268,6 @@ gateway.on("delivery-route", (route: unknown) => broadcast({ type: "delivery-rou
 // Trou de seq sur la connexion gateway : des événements ont pu être manqués,
 // on resonde immédiatement l'état OpenClaw.
 gateway.on("resync", () => openclawCollector.refresh());
-
-openclawCollector.subscribe(() => statusCollector.refresh());
-gateway.start();
-openclawCollector.start();
-statusCollector.start();
 
 app.get(
   "/api/chat/ws",
@@ -275,7 +314,7 @@ app.get(
         };
 
         if (!authed) {
-          if (msg.type === "auth" && safeTokenEqual(msg.token, env.authToken)) {
+          if (msg.type === "auth" && safeTokenEqual(msg.token, getEnv().authToken)) {
             authed = true;
             if (authTimer) clearTimeout(authTimer);
             registered = ws;
@@ -299,9 +338,9 @@ app.get(
               .catch((err) => {
                 // Log sobre côté serveur, aucun détail envoyé au client : le
                 // chat reste utilisable sans l'historique.
-                console.error(
-                  `[chat] historique gateway indisponible: ${err instanceof Error ? err.message : String(err)}`,
-                );
+                logError("chat", "historique gateway indisponible", {
+                  raison: err instanceof Error ? err.message : String(err),
+                });
               });
           } else {
             ws.close(1008, "unauthorized");
@@ -428,11 +467,15 @@ app.post("/api/workspace/files", async (c) => {
 
   let data: Uint8Array;
   if (hasBase64) {
-    try {
-      data = Uint8Array.from(Buffer.from(body.contentBase64 as string, "base64"));
-    } catch {
+    // `Buffer.from(x, "base64")` ne lève JAMAIS : il ignore silencieusement
+    // tout caractère hors alphabet. Le try/catch d'origine était donc une
+    // branche morte, et un base64 malformé écrivait un fichier corrompu en
+    // répondant 200. On valide la forme AVANT de décoder.
+    const encoded = (body.contentBase64 as string).trim();
+    if (!isValidBase64(encoded)) {
       return c.json({ error: "base64 invalide" }, 400);
     }
+    data = Uint8Array.from(Buffer.from(encoded, "base64"));
   } else {
     data = new TextEncoder().encode(body.contentText as string);
   }
@@ -466,19 +509,14 @@ app.post("/api/workspace/files", async (c) => {
 app.use("/*", serveStatic({ root: "./web/dist" }));
 app.get("*", serveStatic({ path: "./web/dist/index.html" }));
 
-const server = Bun.serve({
-  port: env.port,
-  hostname: env.bindHost,
-  fetch: app.fetch,
-  websocket,
-});
+let server: ReturnType<typeof Bun.serve> | null = null;
 
 let shuttingDown = false;
 async function shutdown(signal: string) {
   if (shuttingDown) return;
   shuttingDown = true;
-  console.log(`[shutdown] ${signal} received`);
-  clearInterval(pruneTimer);
+  logInfo("arret", "signal reçu", { signal });
+  if (pruneTimer) clearInterval(pruneTimer);
   for (const ws of chatClients) {
     try {
       ws.close(1001, "server shutting down");
@@ -490,38 +528,73 @@ async function shutdown(signal: string) {
   try {
     gateway.stop();
   } catch (error) {
-    console.error(`[shutdown] gateway: ${(error as Error).message}`);
+    logError("arret", "fermeture de la gateway", { raison: (error as Error).message });
   }
   try {
     await logTailer.stop();
   } catch (error) {
-    console.error(`[shutdown] logs: ${(error as Error).message}`);
+    logError("arret", "fermeture du tail de logs", { raison: (error as Error).message });
   }
   try {
     await statusCollector.stop();
   } catch (error) {
-    console.error(`[shutdown] collector: ${(error as Error).message}`);
+    logError("arret", "arrêt du collecteur de statuts", { raison: (error as Error).message });
   }
   try {
     await openclawCollector.stop();
   } catch (error) {
-    console.error(`[shutdown] OpenClaw collector: ${(error as Error).message}`);
+    logError("arret", "arrêt du collecteur OpenClaw", { raison: (error as Error).message });
   }
   try {
-    await server.stop(true);
+    await server?.stop(true);
   } catch (error) {
-    console.error(`[shutdown] server: ${(error as Error).message}`);
+    logError("arret", "fermeture du serveur HTTP", { raison: (error as Error).message });
   }
   try {
     closeDatabase();
   } catch (error) {
-    console.error(`[shutdown] database: ${(error as Error).message}`);
+    logError("arret", "fermeture de la base", { raison: (error as Error).message });
   }
-  console.log("[shutdown] complete");
+  logInfo("arret", "arrêt terminé");
   process.exit(0);
 }
 
-process.once("SIGINT", () => void shutdown("SIGINT"));
-process.once("SIGTERM", () => void shutdown("SIGTERM"));
+// --- Démarrage ---
+// Tout ce qui a un effet de bord observable — purge SQLite, connexion gateway,
+// sondes, écoute HTTP, signaux — n'a lieu que si ce fichier est le point
+// d'entrée (`bun src/index.ts`, cf. package.json et launchd). Sous `bun test`,
+// index.ts n'est qu'importé : les routes sont exerçables sans qu'un serveur
+// s'ouvre sur le port de production ni que la vraie base soit touchée.
+if (import.meta.main) {
+  pruneOldPings();
+  pruneTimer = setInterval(pruneOldPings, 60 * 60 * 1000);
 
-console.log(`clawdeck backend → http://${env.bindHost}:${env.port}`);
+  openclawCollector.subscribe(() => statusCollector.refresh());
+  gateway.start();
+  openclawCollector.start();
+  statusCollector.start();
+
+  // Le client gateway n'émet un statut « déconnecté » que s'il a d'abord été
+  // connecté : une gateway éteinte au démarrage (cas courant, launchd lance
+  // clawdeck sans attendre OpenClaw) laisserait le journal muet sur ce qui
+  // explique un dashboard vide. Un seul contrôle différé écrit la ligne
+  // manquante ; les bascules suivantes viennent des événements.
+  setTimeout(() => {
+    if (!gateway.isConnected) gatewayLog.failed("aucune connexion depuis le démarrage");
+  }, GATEWAY_STARTUP_GRACE_MS);
+
+  server = Bun.serve({
+    port: getEnv().port,
+    hostname: getEnv().bindHost,
+    fetch: app.fetch,
+    websocket,
+  });
+
+  process.once("SIGINT", () => void shutdown("SIGINT"));
+  process.once("SIGTERM", () => void shutdown("SIGTERM"));
+
+  // Seule ligne de démarrage : l'adresse d'écoute est ce que l'exploitant vient
+  // chercher dans stdout.log (le bind est restreint au loopback ou à Tailscale,
+  // voir getEnv().ts). Aucun token, aucun chemin de configuration.
+  logInfo("http", "backend démarré", { adresse: `http://${getEnv().bindHost}:${getEnv().port}` });
+}

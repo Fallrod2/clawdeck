@@ -236,4 +236,24 @@ export function parseEnv(source: EnvSource) {
   };
 }
 
-export const env = parseEnv(process.env);
+// Configuration du process, résolue au PREMIER ACCÈS et non à l'import.
+//
+// L'ancienne forme (`export const env = parseEnv(process.env)`) faisait échouer
+// le simple chargement de ce module quand la configuration manquait. Effet
+// concret : `bun test src/env.test.ts` était impossible à lancer seul hors
+// d'un dossier contenant un `.env`, alors que ce fichier ne teste QUE des
+// fonctions pures. La suite complète, elle, ne passait que parce qu'un autre
+// fichier de test amorçait `process.env` avant — un ordre d'exécution dont
+// dépendait silencieusement la CI.
+export type Env = ReturnType<typeof parseEnv>;
+
+let cachedEnv: Env | null = null;
+
+export function getEnv(): Env {
+  return (cachedEnv ??= parseEnv(process.env));
+}
+
+// Réservé aux tests : impose une configuration sans passer par process.env.
+export function useEnv(next: Env | null): void {
+  cachedEnv = next;
+}

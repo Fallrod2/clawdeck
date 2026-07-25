@@ -30,3 +30,18 @@ export function parseHours(raw: string | undefined): number | null {
 
 // Taille maximale d'un message chat relayé vers la gateway (en caractères).
 export const MAX_CHAT_TEXT_LENGTH = 8_000;
+
+// Base64 canonique : groupes de 4 caractères de l'alphabet standard, avec au
+// plus deux « = » de bourrage à la toute fin. Nécessaire parce que
+// `Buffer.from(x, "base64")` ne signale jamais une entrée invalide — il jette
+// silencieusement les caractères inconnus et rend des octets faux (constaté
+// le 2026-07-25 : un téléversement malformé écrivait un fichier corrompu en
+// répondant 200).
+const BASE64_PATTERN = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
+
+export function isValidBase64(value: string): boolean {
+  // Une chaîne vide est un contenu vide légitime (fichier vide), pas une
+  // erreur de format.
+  if (value.length === 0) return true;
+  return BASE64_PATTERN.test(value);
+}
