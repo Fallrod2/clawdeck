@@ -36,6 +36,7 @@ import type { ChatController } from "../hooks/useChat";
 import { buildTimeline, formatDayLabel, type MessageGroup } from "../lib/timeline";
 import { ChatSearch, type ChatSearchHighlight } from "./ChatSearch";
 import { getToken } from "../lib/token";
+import { downloadTranscript } from "../lib/transcriptExport";
 
 const REMARK_PLUGINS = [remarkGfm];
 
@@ -839,6 +840,17 @@ export function ChatPanel({ chat, active }: { chat: ChatController; active: bool
             }`}
           >
             Rechercher
+          </button>
+          {/* Téléchargement et non copie : un transcript entier passe mal par
+              la retombée `execCommand`, seule voie disponible hors contexte
+              sécurisé (voir lib/clipboard.ts). */}
+          <button
+            type="button"
+            onClick={() => downloadTranscript(messages)}
+            disabled={messages.length === 0}
+            className="hidden min-h-10 rounded-lg border border-[var(--border-subtle)] bg-black/20 px-2.5 text-2xs text-[var(--text-secondary)] transition hover:bg-white/6 active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-40 sm:inline-block sm:min-h-8"
+          >
+            Exporter
           </button>
         <div
           className="flex items-center gap-2 rounded-full border border-[var(--border-subtle)] bg-black/20 px-2.5 py-1 text-2xs text-[var(--text-secondary)]"
