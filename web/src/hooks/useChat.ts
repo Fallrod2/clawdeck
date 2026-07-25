@@ -16,6 +16,7 @@ import {
   type ToolCall,
   type ToolCallPhase,
 } from "../lib/chatTypes";
+import { mergeHistory } from "../lib/historyMerge";
 
 // crypto.randomUUID() exige un contexte sécurisé (HTTPS ou localhost) — le
 // dashboard est servi en http:// sur l'IP Tailscale, donc indisponible ici ;
@@ -543,7 +544,12 @@ export function useChat(token: string | null) {
             setDeliveryRoute(frame.route);
             break;
           case "history":
-            setMessages((prev) => (prev.length === 0 ? parseHistory(frame.messages) : prev));
+            // Fusion et non remplacement : la frame `history` arrive aussi
+            // après une RECONNEXION, alors que le transcript contient déjà des
+            // messages. L'ignorer dans ce cas laissait invisible, jusqu'au
+            // rechargement complet, tout ce qui était arrivé pendant la
+            // coupure — exactement ce qu'on veut voir en revenant.
+            setMessages((prev) => capMessages(mergeHistory(prev, parseHistory(frame.messages))));
             break;
           case "chat":
             handleChatEvent(frame.payload);
@@ -641,7 +647,7 @@ export function useChat(token: string | null) {
       wsRef.current?.close();
       wsRef.current = null;
     };
-  }, [token, handleChatEvent, handleAgentEvent, handleSessionMessage, touchRun]);
+  }, [token, handleChatEvent, handleAgentEvent, handleSessionMessage, touchRun, capMessages]);
 
   const send = useCallback(
     (text: string) => {
