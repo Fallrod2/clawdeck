@@ -2,8 +2,27 @@
 <html lang="fr">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- viewport-fit=cover : sur iPhone, l'application ajoutée à l'écran
+         d'accueil s'étend sous l'encoche et la barre d'accueil ; sans lui, deux
+         bandes claires encadreraient un thème sombre. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>clawdeck</title>
+    <meta name="description" content="Supervision et pilotage d'une instance OpenClaw locale." />
+    <!-- Couleur de la barre d'état, alignée sur le canvas de l'interface. -->
+    <meta name="theme-color" content="#090b0c" />
+    <meta name="color-scheme" content="dark" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/icone-32.png" />
+    <link rel="apple-touch-icon" href="/icone-180.png" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <!-- iOS n'utilise le manifeste que partiellement : ces deux balises
+         restent nécessaires pour un affichage plein écran à l'ouverture depuis
+         l'écran d'accueil. -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="clawdeck" />
+    <!-- Console privée sur tailnet : aucune raison d'être indexée ou suivie. -->
+    <meta name="robots" content="noindex, nofollow" />
+    <meta name="referrer" content="no-referrer" />
   </head>
   <body>
     <div id="root"></div>

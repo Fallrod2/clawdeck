@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="113" fill="#0d1112"/>
+  <rect x="30.72" y="30.72" width="450.56" height="450.56" rx="90.4"
+        fill="none" stroke="#65d6bd" stroke-opacity="0.28" stroke-width="10.24"/>
+  <text x="50%" y="50%" text-anchor="middle" dominant-baseline="central"
+        font-family="IBM Plex Mono, ui-monospace, monospace" font-size="174"
+        font-weight="600" fill="#65d6bd" letter-spacing="5.12">cd</text>
+</svg>

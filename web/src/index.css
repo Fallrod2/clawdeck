@@ -121,6 +121,15 @@ html {
 
 body {
   @apply m-0 min-h-screen;
+  /* Zones sûres iOS : le document déclare viewport-fit=cover pour que
+     l'application ajoutée à l'écran d'accueil s'étende sous l'encoche et la
+     barre d'accueil. Sans ces marges, l'en-tête passerait DERRIÈRE l'encoche
+     et le composeur derrière la barre d'accueil. Les valeurs valent 0 dans un
+     onglet de navigateur ordinaire : aucun effet là où ce n'est pas utile. */
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  padding-left: env(safe-area-inset-left, 0px);
+  padding-right: env(safe-area-inset-right, 0px);
   color: var(--text-primary);
   background:
     radial-gradient(circle at 50% -20%, rgba(101, 214, 189, 0.06), transparent 34rem),
