@@ -113,6 +113,26 @@ const MESSAGES: ChatMessage[] = [
   }),
 
   m({
+    id: "a5",
+    timestamp: T + 50_000,
+    text: "Je te préviens sur ton téléphone.",
+    toolCalls: [
+      {
+        id: "t4",
+        name: "message",
+        phase: "result",
+        startedAt: T + 50_000,
+        result: JSON.stringify({
+          channel: "whatsapp",
+          to: "+33769506360",
+          via: "gateway",
+          result: { messageId: "3EB0…", channel: "whatsapp" },
+        }),
+      },
+    ],
+  }),
+
+  m({
     id: "u4",
     role: "user",
     text: "Celui-ci a échoué à l'envoi.",

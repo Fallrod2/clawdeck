@@ -158,7 +158,11 @@ function ReasoningBlock({ text, live }: { text: string; live: boolean }) {
     <details className="clawdeck-enter group mb-2 overflow-hidden rounded-lg border border-[var(--border-subtle)] bg-black/20 text-xs">
       <summary className="flex min-h-8 cursor-pointer list-none items-center gap-2 px-3 text-[var(--text-muted)] marker:content-none">
         <span className="shrink-0 text-2xs uppercase tracking-[0.12em]">Raisonnement</span>
-        {live && <span className="min-w-0 flex-1 truncate italic opacity-70">{tail}</span>}
+        {/* Masqué une fois déplié : l'aperçu répéterait la dernière ligne du
+            texte affiché juste en dessous. */}
+        {live && (
+          <span className="min-w-0 flex-1 truncate italic opacity-70 group-open:hidden">{tail}</span>
+        )}
         <span className="ml-auto shrink-0 transition-transform group-open:rotate-180" aria-hidden>
           ⌄
         </span>
@@ -170,6 +174,30 @@ function ReasoningBlock({ text, live }: { text: string; live: boolean }) {
   );
 }
 
+// Un envoi sortant réussi de l'agent, extrait du résultat de l'outil
+// `message`. C'est l'information la plus attendue de tout le panneau : après
+// trois bugs de synchronisation WhatsApp, « est-ce que c'est VRAIMENT parti
+// sur le téléphone ? » ne doit pas exiger de déplier un JSON.
+function readOutboundMessage(tool: ToolCall): { channel: string; to: string } | null {
+  if (tool.name !== "message" || tool.phase !== "result" || tool.isError) return null;
+  const raw =
+    typeof tool.result === "string"
+      ? tool.result
+      : typeof (tool.result as { content?: unknown } | null)?.content === "string"
+        ? ((tool.result as { content: string }).content)
+        : null;
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as { channel?: unknown; to?: unknown };
+    if (typeof parsed.channel !== "string" || typeof parsed.to !== "string") return null;
+    return { channel: parsed.channel, to: parsed.to };
+  } catch {
+    // Forme inattendue : on retombe sur la carte d'outil ordinaire plutôt que
+    // d'affirmer une livraison qu'on n'a pas su lire.
+    return null;
+  }
+}
+
 function formatDuration(ms: number): string {
   if (ms < 1_000) return `${ms} ms`;
   if (ms < 60_000) return `${(ms / 1_000).toFixed(1)} s`;
@@ -177,6 +205,18 @@ function formatDuration(ms: number): string {
 }
 
 function ToolCallCard({ tool }: { tool: ToolCall }) {
+  const outbound = readOutboundMessage(tool);
+  // Livraison sortante : ligne affirmative et lisible, pas un bloc à déplier.
+  if (outbound) {
+    return (
+      <p className="clawdeck-enter mt-3 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg border border-emerald-300/15 bg-emerald-300/6 px-3 py-1.5 text-2xs text-emerald-200/90">
+        <span aria-hidden>↗</span>
+        <span>Message envoyé sur {channelLabel(outbound.channel)}</span>
+        <span className="font-mono text-[var(--text-muted)]">{outbound.to}</span>
+      </p>
+    );
+  }
+
   const complete = tool.phase === "result";
   const label = !complete ? "En cours" : tool.isError ? "Erreur" : "Terminé";
   const args = formatPayload(tool.args);
