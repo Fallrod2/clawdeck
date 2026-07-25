@@ -109,6 +109,17 @@ function parseHistory(raw: unknown): ChatMessage[] {
   return out;
 }
 
+// Borne de sécurité sur la sortie d'une commande. La gateway borne déjà, mais
+// une session `exec` bavarde ne doit pas pouvoir gonfler indéfiniment l'état
+// React ni le rendu : on garde la FIN, celle qui porte le résultat.
+const MAX_TOOL_OUTPUT_CHARS = 4_000;
+
+function capOutput(text: string): string {
+  return text.length <= MAX_TOOL_OUTPUT_CHARS
+    ? text
+    : `… début tronqué\n${text.slice(-MAX_TOOL_OUTPUT_CHARS)}`;
+}
+
 // Un message encore « ouvert » (accusé ou réconciliation attendus) survit au
 // cap glissant.
 function isSettling(m: ChatMessage): boolean {
@@ -279,6 +290,47 @@ export function useChat(token: string | null) {
         touchRun(runId, { waitingApproval: true });
         return;
       }
+      // Flux `thinking` : raisonnement de l'agent, envoyé cumulé (`text`) avec
+      // son incrément (`delta`). On garde le cumulé, seul état complet même si
+      // un incrément s'est perdu.
+      if (p.stream === "thinking") {
+        const data = asRecord(p.data);
+        const text = asString(data?.text);
+        if (!text) return;
+        upsertAssistantMessage(runId, (msg) => ({ ...msg, reasoning: text }));
+        touchRun(runId, {});
+        return;
+      }
+
+      // Flux `command_output` : sortie live d'une commande, rattachée à son
+      // appel d'outil. C'est ce qui permet de suivre un `exec` long sans
+      // attendre son résultat final.
+      if (p.stream === "command_output") {
+        const data = asRecord(p.data);
+        const toolCallId = asString(data?.toolCallId);
+        if (!data || !toolCallId) return;
+        const output = asString(data.output);
+        const title = asString(data.title);
+        const exitCode = typeof data.exitCode === "number" ? data.exitCode : undefined;
+        const durationMs = typeof data.durationMs === "number" ? data.durationMs : undefined;
+        upsertAssistantMessage(runId, (msg) => ({
+          ...msg,
+          toolCalls: msg.toolCalls.map((tool) =>
+            tool.id === toolCallId
+              ? {
+                  ...tool,
+                  ...(output ? { output: capOutput(output) } : {}),
+                  ...(title ? { title } : {}),
+                  ...(exitCode !== undefined ? { exitCode } : {}),
+                  ...(durationMs !== undefined ? { durationMs } : {}),
+                }
+              : tool,
+          ),
+        }));
+        touchRun(runId, {});
+        return;
+      }
+
       if (p.stream !== "tool") return;
       const data = asRecord(p.data);
       if (!data) return;

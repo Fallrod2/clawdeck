@@ -17,6 +17,17 @@ export interface ToolCall {
   result?: unknown;
   isError?: boolean;
   startedAt: number;
+  // Flux `command_output` : sortie de commande, envoyée cumulée et déjà bornée
+  // par la gateway. Remplacée à chaque événement, jamais concaténée — la
+  // concaténer dupliquerait tout ce qui précède.
+  output?: string;
+  // Renseignés à la fin d'une commande : le résultat opérationnel qui
+  // intéresse vraiment quand on supervise une machine.
+  exitCode?: number;
+  durationMs?: number;
+  // Titre lisible calculé par OpenClaw (ex. la commande réelle), plus parlant
+  // que le nom d'outil brut.
+  title?: string;
 }
 
 // Cycle d'accusé d'un envoi initié depuis CE dashboard : « sending » tant que
@@ -45,6 +56,9 @@ export interface ChatMessage {
   clientMessageId?: string;
   sendState?: SendState;
   origin?: MessageOrigin;
+  // Flux `thinking` : raisonnement de l'agent, texte cumulatif. Replié par
+  // défaut — c'est un éclairage sur le POURQUOI d'une action, pas la réponse.
+  reasoning?: string;
 }
 
 // Activité d'un run de l'agent, reconstruite depuis les événements `agent`

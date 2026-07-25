@@ -122,29 +122,88 @@ function formatPayload(value: unknown): string | null {
   return formatted.length > 8_000 ? `${formatted.slice(0, 8_000)}\n… contenu tronqué` : formatted;
 }
 
+// Raisonnement de l'agent (flux `thinking`). Replié par défaut : c'est un
+// éclairage sur le POURQUOI d'une action, jamais la réponse elle-même. Le
+// résumé montre la dernière ligne en cours d'écriture, ce qui donne la
+// visibilité live sans imposer un pavé ni contrarier un repli manuel.
+function ReasoningBlock({ text, live }: { text: string; live: boolean }) {
+  const tail = text.trim().split("\n").filter(Boolean).pop() ?? "";
+  return (
+    <details className="clawdeck-enter group mb-2 overflow-hidden rounded-lg border border-[var(--border-subtle)] bg-black/20 text-xs">
+      <summary className="flex min-h-8 cursor-pointer list-none items-center gap-2 px-3 text-[var(--text-muted)] marker:content-none">
+        <span className="shrink-0 text-2xs uppercase tracking-[0.12em]">Raisonnement</span>
+        {live && <span className="min-w-0 flex-1 truncate italic opacity-70">{tail}</span>}
+        <span className="ml-auto shrink-0 transition-transform group-open:rotate-180" aria-hidden>
+          ⌄
+        </span>
+      </summary>
+      <div className="border-t border-[var(--border-subtle)] px-3 py-2">
+        <p className="whitespace-pre-wrap break-words text-xs leading-6 text-[var(--text-secondary)]">{text}</p>
+      </div>
+    </details>
+  );
+}
+
+function formatDuration(ms: number): string {
+  if (ms < 1_000) return `${ms} ms`;
+  if (ms < 60_000) return `${(ms / 1_000).toFixed(1)} s`;
+  return `${Math.round(ms / 60_000)} min`;
+}
+
 function ToolCallCard({ tool }: { tool: ToolCall }) {
   const complete = tool.phase === "result";
   const label = !complete ? "En cours" : tool.isError ? "Erreur" : "Terminé";
   const args = formatPayload(tool.args);
   const result = formatPayload(tool.result);
+  // Un code de sortie non nul est un échec même si l'outil n'a pas levé
+  // d'erreur : le dire explicitement plutôt que de le noyer dans la sortie.
+  const failedExit = tool.exitCode !== undefined && tool.exitCode !== 0;
 
   return (
     <details className="clawdeck-enter group mt-3 overflow-hidden rounded-lg border border-[var(--border-subtle)] bg-black/25 text-xs">
       <summary className="flex min-h-10 cursor-pointer list-none items-center gap-2 px-3 text-[var(--text-secondary)] marker:content-none">
         <span
           className={`h-1.5 w-1.5 shrink-0 rounded-full ${
-            !complete ? "bg-[var(--status-warning)]" : tool.isError ? "bg-[var(--status-critical)]" : "bg-[var(--status-good)]"
+            !complete
+              ? "animate-pulse bg-[var(--status-warning)]"
+              : tool.isError || failedExit
+                ? "bg-[var(--status-critical)]"
+                : "bg-[var(--status-good)]"
           }`}
           aria-hidden
         />
-        <span className="truncate font-mono text-2xs font-medium text-[var(--text-primary)]">{tool.name}</span>
-        <span className="ml-auto text-2xs uppercase tracking-[0.12em] text-[var(--text-muted)]">{label}</span>
-        <span className="text-[var(--text-muted)] transition-transform group-open:rotate-180" aria-hidden>
+        {/* Titre calculé par OpenClaw (souvent la commande réelle) quand il
+            existe : bien plus parlant que le nom d'outil brut. */}
+        <span className="truncate font-mono text-2xs font-medium text-[var(--text-primary)]">
+          {tool.title ?? tool.name}
+        </span>
+        {tool.durationMs !== undefined && (
+          <span className="shrink-0 font-mono text-2xs text-[var(--text-muted)]">
+            {formatDuration(tool.durationMs)}
+          </span>
+        )}
+        {failedExit && (
+          <span className="shrink-0 font-mono text-2xs text-red-300">sortie {tool.exitCode}</span>
+        )}
+        <span className="ml-auto shrink-0 text-2xs uppercase tracking-[0.12em] text-[var(--text-muted)]">{label}</span>
+        <span className="shrink-0 text-[var(--text-muted)] transition-transform group-open:rotate-180" aria-hidden>
           ⌄
         </span>
       </summary>
-      {(args || result) && (
+      {(args || result || tool.output) && (
         <div className="space-y-3 border-t border-[var(--border-subtle)] px-3 py-3">
+          {/* Sortie live : placée AVANT les arguments, c'est elle qu'on
+              surveille pendant qu'une commande tourne. */}
+          {tool.output && (
+            <div>
+              <p className="mb-1.5 text-2xs font-medium uppercase tracking-[0.14em] text-[var(--text-muted)]">
+                Sortie
+              </p>
+              <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words font-mono text-2xs leading-5 text-[var(--text-secondary)]">
+                {tool.output}
+              </pre>
+            </div>
+          )}
           {args && (
             <div>
               <p className="mb-1.5 text-2xs font-medium uppercase tracking-[0.14em] text-[var(--text-muted)]">Arguments</p>
@@ -318,6 +377,9 @@ function GroupBlock({
                     : ""
                 }
               >
+                {message.reasoning && (
+                  <ReasoningBlock text={message.reasoning} live={message.pending} />
+                )}
                 <MessageBody message={message} />
                 {message.toolCalls.map((tool) => (
                   <ToolCallCard key={tool.id} tool={tool} />
