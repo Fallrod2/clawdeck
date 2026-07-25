@@ -90,6 +90,25 @@ Changer cela signifierait faire tourner le tail en permanence et conserver un
 historique en mémoire : c'est-à-dire transformer une vue en direct en journal,
 ce que le produit refuse. Les logs complets vivent chez OpenClaw.
 
+### Vue diagnostic en lecture seule
+
+L'idée d'origine (version OpenClaw, stabilité récente, sessions actives, état
+mémoire) est **largement périmée** : la version et l'uptime sont sur la carte
+Gateway — un redémarrage se voit à un uptime qui retombe à quelques minutes —
+et la stabilité récente est exactement ce que fait le journal d'anomalies.
+
+Ne resteraient que deux éléments, tous deux écartés :
+
+- **Sessions actives** : `sessions.list` porte les clés de session et leur
+  origine, donc des numéros WhatsApp. Même raison que `sessions.usage`.
+- **`diagnostics.stability`** (`operator.read`, disponible) : renvoie un
+  journal d'événements internes d'OpenClaw dont la charge utile n'est pas
+  bornée ni connue. Il ferait doublon avec le journal d'anomalies, qui observe
+  la même chose de l'extérieur et dont on maîtrise le contenu.
+
+À rouvrir seulement si une panne réelle se révèle indiagnosticable avec ce
+qu'on affiche déjà.
+
 ### Coloration syntaxique des blocs de code
 
 Se recalculerait à chaque delta de streaming, pour un gain que le soin apporté

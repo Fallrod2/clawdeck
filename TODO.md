@@ -63,13 +63,21 @@ supervision, chat riche, notifications.
 - [ ] Tests d'intégration avec fausses gateway et Ollama. Les routes HTTP et
   la base sont couvertes ; il manque le comportement des collecteurs face à
   des dépendances qui répondent mal.
-- [ ] Faire tourner `scripts/smoke.ts` en CI. Il fonctionne en local ; en CI
-  il faut installer Chromium (~95 Mo par exécution), à arbitrer.
 
-## Interface
+## Pistes ouvertes
 
-- [ ] Vue diagnostic en lecture seule : version OpenClaw, stabilité récente,
-  sessions actives, état mémoire — données sensibles masquées.
+Nées de ce qu'on a appris en construisant, pas d'un plan initial. À faire
+seulement si l'usage réel les réclame.
+
+- [ ] **Cibles configurables du moniteur réseau.** Les trois sondes sont
+  codées en dur ; les déclarer dans `.env` permettrait de surveiller ce qui
+  compte vraiment à un moment donné, sans toucher au code.
+- [ ] **Export de la conversation** (copie intégrale ou fichier Markdown).
+  La copie par groupe existe ; l'export complet servirait à archiver un
+  échange qui a compté, hors du plafond de 500 messages en mémoire.
+- [ ] **Aperçu des médias dans l'onglet Fichiers.** `/api/media` sait déjà
+  servir un fichier du workspace de façon confinée ; l'onglet Fichiers
+  n'affiche que du texte et des images encodées par la gateway.
 
 ---
 
