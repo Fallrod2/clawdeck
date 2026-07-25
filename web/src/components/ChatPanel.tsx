@@ -1,18 +1,75 @@
 // src/components/ChatPanel.tsx — conversation principale, streaming et outils.
 // Le hook useChat vit dans App (la connexion doit survivre au changement
 // d'onglet) : ce panneau ne fait qu'afficher son état et relayer ses actions.
+//
+// Parti pris de présentation : traitement ASYMÉTRIQUE des deux interlocuteurs.
+// Les messages de l'opérateur sont courts — bulle compacte alignée à droite.
+// Les réponses de l'agent contiennent du code, des tableaux et des appels
+// d'outils — bloc pleine largeur adossé à un rail vertical qui porte leur
+// état (en cours, interrompu, en erreur). Une bulle à 82 % de large écrasait
+// ces contenus sans rien apporter.
 
-import { useCallback, useEffect, useRef, useState, type ComponentPropsWithoutRef } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ComponentPropsWithoutRef,
+} from "react";
 import Markdown, { type Components } from "react-markdown";
 // GFM : tableaux, listes de tâches et texte barré produits par l'agent —
 // sans rehype-raw, le HTML reste échappé (pas de XSS).
 import remarkGfm from "remark-gfm";
 import { CopyButton } from "./CopyButton";
-import type { ChatMessage, DeliveryRoute, ToolCall } from "../lib/chatTypes";
-import type { ChatController } from "../hooks/useChat";
 import { ActivityStrip } from "./ActivityStrip";
+import {
+  MAX_CHAT_TEXT_LENGTH,
+  type ChatMessage,
+  type DeliveryRoute,
+  type ToolCall,
+} from "../lib/chatTypes";
+import type { ChatController } from "../hooks/useChat";
+import { buildTimeline, formatDayLabel, type MessageGroup } from "../lib/timeline";
 
 const REMARK_PLUGINS = [remarkGfm];
+
+/** Brouillon conservé d'un rechargement à l'autre. */
+const DRAFT_STORAGE_KEY = "clawdeck.chatDraft";
+/** Le compteur de caractères n'apparaît qu'à l'approche de la limite. */
+const COUNTER_REVEAL_RATIO = 0.8;
+/** Hauteur maximale du composeur avant qu'il ne défile lui-même. */
+const COMPOSER_MAX_HEIGHT_PX = 200;
+
+// Amorces d'usage : volontairement opérationnelles et propres à ce produit.
+// Des suggestions génériques n'apprendraient rien de ce que cet agent-là sait
+// faire. Un clic REMPLIT le composeur sans envoyer : l'agent agit sur une
+// vraie machine, la dernière relecture appartient à l'opérateur.
+const STARTERS = [
+  "Quel est ton statut ?",
+  "Qu'as-tu fait aujourd'hui ?",
+  "Résume les erreurs récentes",
+  "Liste les fichiers de ton workspace",
+];
+
+function readStoredDraft(): string {
+  try {
+    return localStorage.getItem(DRAFT_STORAGE_KEY) ?? "";
+  } catch {
+    // Stockage indisponible (mode privé) : on démarre simplement à vide.
+    return "";
+  }
+}
+
+function storeDraft(value: string) {
+  try {
+    if (value) localStorage.setItem(DRAFT_STORAGE_KEY, value);
+    else localStorage.removeItem(DRAFT_STORAGE_KEY);
+  } catch {
+    // Brouillon non persisté : sans conséquence sur la session en cours.
+  }
+}
 
 // Bloc de code enrichi d'un bouton de copie. Le texte est lu au clic depuis
 // le DOM (textContent) plutôt que reconstruit depuis les nœuds markdown :
@@ -54,28 +111,8 @@ function channelLabel(channel: string): string {
   return CHANNEL_LABELS[channel] ?? channel;
 }
 
-// Où part un message écrit ici. Sans route externe connue, la réponse reste
-// dans la session : le dire explicitement évite de croire le téléphone servi.
-function DeliveryBadge({ route }: { route: DeliveryRoute | null }) {
-  const external = route !== null;
-  return (
-    <p
-      className={`clawdeck-enter mb-2 flex items-center gap-1.5 px-1 text-[11px] ${
-        external ? "text-emerald-200/85" : "text-[var(--text-muted)]"
-      }`}
-      aria-live="polite"
-    >
-      <span aria-hidden>{external ? "↗" : "○"}</span>
-      {external ? (
-        <span>
-          Relayé vers {channelLabel(route.channel)}
-          <span className="text-[var(--text-muted)]"> · {route.to}</span>
-        </span>
-      ) : (
-        <span>Session interne seule — aucun canal externe épinglé</span>
-      )}
-    </p>
-  );
+function formatTime(timestamp: number): string {
+  return new Date(timestamp).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
 }
 
 function formatPayload(value: unknown): string | null {
@@ -92,30 +129,40 @@ function ToolCallCard({ tool }: { tool: ToolCall }) {
   const result = formatPayload(tool.result);
 
   return (
-    <details className="clawdeck-enter group mt-3 overflow-hidden rounded-lg border border-white/8 bg-black/20 text-xs">
+    <details className="clawdeck-enter group mt-3 overflow-hidden rounded-lg border border-[var(--border-subtle)] bg-black/25 text-xs">
       <summary className="flex min-h-10 cursor-pointer list-none items-center gap-2 px-3 text-[var(--text-secondary)] marker:content-none">
         <span
           className={`h-1.5 w-1.5 shrink-0 rounded-full ${
-            !complete ? "bg-amber-400" : tool.isError ? "bg-red-400" : "bg-emerald-400"
+            !complete ? "bg-[var(--status-warning)]" : tool.isError ? "bg-[var(--status-critical)]" : "bg-[var(--status-good)]"
           }`}
           aria-hidden
         />
-        <span className="truncate font-mono text-[11px] text-[var(--text-primary)]">{tool.name}</span>
-        <span className="ml-auto text-[10px] uppercase tracking-[0.12em] text-[var(--text-muted)]">{label}</span>
-        <span className="text-[var(--text-muted)] transition-transform group-open:rotate-180" aria-hidden>⌄</span>
+        <span className="truncate font-mono text-2xs font-medium text-[var(--text-primary)]">{tool.name}</span>
+        <span className="ml-auto text-2xs uppercase tracking-[0.12em] text-[var(--text-muted)]">{label}</span>
+        <span className="text-[var(--text-muted)] transition-transform group-open:rotate-180" aria-hidden>
+          ⌄
+        </span>
       </summary>
       {(args || result) && (
-        <div className="space-y-3 border-t border-white/7 px-3 py-3">
+        <div className="space-y-3 border-t border-[var(--border-subtle)] px-3 py-3">
           {args && (
             <div>
-              <p className="mb-1.5 text-[10px] font-medium uppercase tracking-[0.14em] text-[var(--text-muted)]">Arguments</p>
-              <pre className="max-h-52 overflow-auto whitespace-pre-wrap break-words font-mono text-[11px] leading-5 text-[var(--text-secondary)]">{args}</pre>
+              <p className="mb-1.5 text-2xs font-medium uppercase tracking-[0.14em] text-[var(--text-muted)]">Arguments</p>
+              <pre className="max-h-52 overflow-auto whitespace-pre-wrap break-words font-mono text-2xs leading-5 text-[var(--text-secondary)]">
+                {args}
+              </pre>
             </div>
           )}
           {result && (
             <div>
-              <p className="mb-1.5 text-[10px] font-medium uppercase tracking-[0.14em] text-[var(--text-muted)]">Résultat</p>
-              <pre className={`max-h-64 overflow-auto whitespace-pre-wrap break-words font-mono text-[11px] leading-5 ${tool.isError ? "text-red-300" : "text-[var(--text-secondary)]"}`}>{result}</pre>
+              <p className="mb-1.5 text-2xs font-medium uppercase tracking-[0.14em] text-[var(--text-muted)]">Résultat</p>
+              <pre
+                className={`max-h-64 overflow-auto whitespace-pre-wrap break-words font-mono text-2xs leading-5 ${
+                  tool.isError ? "text-red-300" : "text-[var(--text-secondary)]"
+                }`}
+              >
+                {result}
+              </pre>
             </div>
           )}
         </div>
@@ -124,107 +171,193 @@ function ToolCallCard({ tool }: { tool: ToolCall }) {
   );
 }
 
-function MessageBubble({
-  message,
-  onRetry,
-  retryDisabled,
-}: {
-  message: ChatMessage;
-  onRetry?: () => void;
-  retryDisabled?: boolean;
-}) {
-  const isUser = message.role === "user";
-  const time = new Date(message.timestamp).toLocaleTimeString("fr-FR", {
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-  // L'historique initial (ids `history-*`) n'est pas animé : l'animation
-  // d'arrivée signale un message NOUVEAU, pas le remplissage de la vue au
-  // chargement — sinon cinquante bulles s'animeraient d'un coup.
-  const isNew = !message.id.startsWith("history-");
+const PROSE_CLASSES =
+  "prose prose-invert max-w-none break-words text-chat " +
+  "prose-headings:mb-2 prose-headings:mt-5 prose-headings:font-semibold prose-headings:tracking-tight " +
+  "prose-p:my-2 prose-li:my-0.5 prose-a:text-emerald-300 prose-a:underline-offset-2 " +
+  "prose-strong:text-[var(--text-primary)] " +
+  "prose-pre:my-3 prose-pre:overflow-x-auto prose-pre:rounded-lg prose-pre:border prose-pre:border-[var(--border-subtle)] prose-pre:bg-black/35 " +
+  "prose-code:text-[0.85em] prose-code:before:content-none prose-code:after:content-none " +
+  "prose-table:text-sm prose-th:font-semibold";
+
+function MessageBody({ message }: { message: ChatMessage }) {
   // Réponse en cours d'écriture ET déjà du texte : le curseur clignotant
   // prend le relais des trois points, qui ne couvrent que le texte vide.
   const streaming = message.pending && Boolean(message.text);
 
+  if (!message.text) {
+    return message.pending ? (
+      <span className="inline-flex items-center gap-1 py-1 text-[var(--text-muted)]" aria-label="Réponse en cours">
+        <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-current" />
+        <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-current [animation-delay:150ms]" />
+        <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-current [animation-delay:300ms]" />
+      </span>
+    ) : null;
+  }
+
   return (
-    <article
-      className={`group/message flex ${isNew ? "clawdeck-enter" : ""} ${isUser ? "justify-end" : "justify-start"}`}
-      aria-label={`Message ${isUser ? "utilisateur" : "assistant"} à ${time}${
-        message.origin ? `, reçu via ${channelLabel(message.origin.channel)}` : ""
-      }`}
-    >
-      <div className={`max-w-[92%] sm:max-w-[82%] ${isUser ? "items-end" : "items-start"}`}>
-        <div
-          className={`rounded-2xl px-4 py-3 ${
-            isUser
-              ? "rounded-br-md border border-emerald-300/12 bg-emerald-300/9"
-              : "rounded-bl-md border border-white/8 bg-[var(--surface-raised)]"
-          }`}
+    <div className={`${PROSE_CLASSES} ${streaming ? "clawdeck-streaming" : ""}`}>
+      <Markdown remarkPlugins={REMARK_PLUGINS} components={MARKDOWN_COMPONENTS}>
+        {message.text}
+      </Markdown>
+    </div>
+  );
+}
+
+function MessageActions({ message, onRetry, retryDisabled }: {
+  message: ChatMessage;
+  onRetry?: () => void;
+  retryDisabled?: boolean;
+}) {
+  return (
+    <div className="mt-1 flex items-center gap-2">
+      <span className="font-mono text-2xs text-[var(--text-muted)]">
+        {message.pending && " en cours"}
+        {message.sendState === "sending" && (
+          <span className="inline-flex items-center gap-1">
+            <span className="inline-block h-1 w-1 animate-pulse rounded-full bg-current" aria-hidden />
+            envoi en cours
+          </span>
+        )}
+        {message.sendState === "failed" && <span className="text-red-300">échec de l'envoi</span>}
+      </span>
+      {message.sendState === "failed" && onRetry && (
+        <button
+          type="button"
+          onClick={onRetry}
+          disabled={retryDisabled}
+          className="min-h-7 rounded-md border border-red-300/25 bg-red-300/10 px-2 text-2xs font-medium text-red-200 transition hover:bg-red-300/15 active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-45"
         >
-          {message.text ? (
-            <div
-              className={`prose prose-invert prose-sm max-w-none break-words prose-headings:mb-2 prose-headings:mt-4 prose-p:my-1.5 prose-p:leading-6 prose-a:text-emerald-300 prose-pre:my-3 prose-pre:overflow-x-auto prose-pre:rounded-lg prose-pre:border prose-pre:border-white/8 prose-pre:bg-black/25 prose-code:text-[0.82em] ${
-                streaming ? "clawdeck-streaming" : ""
-              }`}
+          Réessayer
+        </button>
+      )}
+      {/* Estompé au repos mais toujours tabulable : un contrôle ne doit pas
+          dépendre du survol (UI_UX.md §7). */}
+      {message.text && (
+        <CopyButton
+          getText={() => message.text}
+          label="Copier le message"
+          className="opacity-0 group-hover/message:opacity-100"
+        />
+      )}
+    </div>
+  );
+}
+
+function GroupHeading({ group }: { group: MessageGroup }) {
+  const isUser = group.role === "user";
+  return (
+    <p
+      className={`mb-1.5 flex items-baseline gap-2 text-2xs ${isUser ? "justify-end" : "justify-start"}`}
+    >
+      <span className="font-medium tracking-[0.04em] text-[var(--text-secondary)]">
+        {isUser ? "Vous" : "OpenClaw"}
+      </span>
+      <span className="font-mono text-[var(--text-muted)]">{formatTime(group.timestamp)}</span>
+      {/* Provenance portée UNE fois par le groupe : sans elle, rien ne
+          distingue ce qui a été écrit ici de ce qui vient du téléphone. */}
+      {group.origin && (
+        <span className="rounded-full border border-[var(--border-subtle)] px-1.5 text-[var(--text-muted)]">
+          via {channelLabel(group.origin.channel)}
+        </span>
+      )}
+    </p>
+  );
+}
+
+function GroupBlock({
+  group,
+  onRetry,
+  retryDisabled,
+  animate,
+}: {
+  group: MessageGroup;
+  onRetry: (clientMessageId: string) => void;
+  retryDisabled: boolean;
+  animate: boolean;
+}) {
+  const isUser = group.role === "user";
+  // Le rail de l'agent porte l'état de sa réponse : c'est lui qui signale un
+  // streaming en cours ou une erreur, plutôt qu'un badge supplémentaire.
+  const last = group.messages[group.messages.length - 1];
+  const railTone = last?.error
+    ? "bg-[var(--status-critical)]/50"
+    : last?.pending
+      ? "bg-[var(--accent)]/70"
+      : "bg-[var(--border-strong)]";
+
+  return (
+    <section className={animate ? "clawdeck-enter" : ""} aria-label={`${isUser ? "Vous" : "OpenClaw"} à ${formatTime(group.timestamp)}`}>
+      <GroupHeading group={group} />
+      <div className={isUser ? "flex flex-col items-end gap-1.5" : "flex gap-3"}>
+        {!isUser && <span className={`w-px shrink-0 rounded-full ${railTone}`} aria-hidden />}
+        <div className={isUser ? "flex w-full flex-col items-end gap-1.5" : "min-w-0 flex-1"}>
+          {group.messages.map((message) => (
+            <article
+              key={message.id}
+              className={`group/message ${isUser ? "max-w-[85%] sm:max-w-[75%]" : "w-full"}`}
             >
-              <Markdown remarkPlugins={REMARK_PLUGINS} components={MARKDOWN_COMPONENTS}>
-                {message.text}
-              </Markdown>
-            </div>
-          ) : message.pending ? (
-            <span className="inline-flex items-center gap-1 py-1 text-[var(--text-muted)]" aria-label="Réponse en cours">
-              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-current" />
-              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-current [animation-delay:150ms]" />
-              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-current [animation-delay:300ms]" />
-            </span>
-          ) : null}
-          {message.toolCalls.map((tool) => (
-            <ToolCallCard key={tool.id} tool={tool} />
+              <div
+                className={
+                  isUser
+                    ? "rounded-2xl rounded-br-md border border-emerald-300/12 bg-emerald-300/8 px-4 py-2.5"
+                    : ""
+                }
+              >
+                <MessageBody message={message} />
+                {message.toolCalls.map((tool) => (
+                  <ToolCallCard key={tool.id} tool={tool} />
+                ))}
+                {message.error && <p className="mt-2 text-xs text-red-300">{message.error}</p>}
+              </div>
+              <MessageActions
+                message={message}
+                onRetry={
+                  message.sendState === "failed" && message.clientMessageId
+                    ? () => onRetry(message.clientMessageId!)
+                    : undefined
+                }
+                retryDisabled={retryDisabled}
+              />
+            </article>
           ))}
-          {message.error && <p className="mt-2 text-xs text-red-300">{message.error}</p>}
-          {message.sendState === "failed" && onRetry && (
-            <button
-              type="button"
-              onClick={onRetry}
-              disabled={retryDisabled}
-              className="mt-2 min-h-8 rounded-lg border border-red-300/25 bg-red-300/10 px-3 text-xs font-medium text-red-200 transition hover:bg-red-300/15 active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-45"
-            >
-              Réessayer
-            </button>
-          )}
-        </div>
-        {/* Les changements d'état d'envoi (envoi en cours → accusé/échec) sont
-            annoncés par la région role="log" aria-live du conteneur : pas de
-            live region imbriquée pour éviter les annonces doublées. L'accusé
-            reste discret : le suffixe « envoi en cours » disparaît. */}
-        <div className={`mt-1.5 flex items-center gap-2 px-1 ${isUser ? "justify-end" : "justify-start"}`}>
-          <p className="font-mono text-[10px] text-[var(--text-muted)]">
-            {isUser ? "Vous" : "OpenClaw"} · {time}
-            {/* Message entré par un canal externe : sans cette mention, rien ne
-                distingue ce que j'ai écrit ici de ce que j'ai écrit au téléphone. */}
-            {message.origin && ` · via ${channelLabel(message.origin.channel)}`}
-            {message.pending ? " · en cours" : ""}
-            {message.sendState === "sending" && (
-              <span>
-                {" · "}
-                <span className="inline-block h-1 w-1 animate-pulse rounded-full bg-current align-middle" aria-hidden />
-                {" envoi en cours"}
-              </span>
-            )}
-            {message.sendState === "failed" && <span className="text-red-300"> · échec de l'envoi</span>}
-          </p>
-          {/* Estompé au repos mais toujours tabulable : un contrôle ne doit
-              pas dépendre du survol (UI_UX.md §7). */}
-          {message.text && (
-            <CopyButton
-              getText={() => message.text}
-              label="Copier le message"
-              className="opacity-0 group-hover/message:opacity-100"
-            />
-          )}
         </div>
       </div>
-    </article>
+    </section>
+  );
+}
+
+function DaySeparator({ timestamp, now }: { timestamp: number; now: number }) {
+  return (
+    <div className="flex items-center gap-3 py-1" role="separator">
+      <span className="h-px flex-1 bg-[var(--border-subtle)]" />
+      <span className="text-2xs font-medium uppercase tracking-[0.12em] text-[var(--text-muted)]">
+        {formatDayLabel(timestamp, now)}
+      </span>
+      <span className="h-px flex-1 bg-[var(--border-subtle)]" />
+    </div>
+  );
+}
+
+// Où part un message écrit ici. Intégré DANS le cadre du composeur plutôt
+// qu'en légende flottante : la particularité de ce produit est que ce qu'on
+// tape part aussi sur un vrai téléphone. Le composeur porte donc son
+// destinataire, comme un formulaire adressé.
+function RouteHeader({ route }: { route: DeliveryRoute | null }) {
+  if (!route) {
+    return (
+      <p className="flex items-center gap-1.5 border-b border-[var(--border-subtle)] px-3 py-1.5 text-2xs text-[var(--text-muted)]">
+        <span aria-hidden>○</span>
+        Session interne — la réponse ne sortira pas d'ici
+      </p>
+    );
+  }
+  return (
+    <p className="flex items-center gap-1.5 border-b border-[var(--border-subtle)] px-3 py-1.5 text-2xs text-emerald-200/85">
+      <span aria-hidden>↗</span>
+      <span className="font-medium">{channelLabel(route.channel)}</span>
+      <span className="font-mono text-[var(--text-muted)]">{route.to}</span>
+    </p>
   );
 }
 
@@ -242,18 +375,30 @@ export function ChatPanel({ chat, active }: { chat: ChatController; active: bool
     retry,
     abort,
   } = chat;
-  const [draft, setDraft] = useState("");
+
+  const [draft, setDraft] = useState(readStoredDraft);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   // « Suit le bas du fil » : état et non ref, l'UI en dépend désormais.
   const [following, setFollowing] = useState(true);
   const [unread, setUnread] = useState(0);
-  // Ids déjà vus, figés au dernier passage en bas de fil.
   const seenIdsRef = useRef(new Set<string>());
   // Un scrollTo programmé déclenche lui aussi onScroll, avec des positions
   // intermédiaires loin du bas : sans cette fenêtre de garde, l'animation
   // douce se ferait passer pour une remontée manuelle et ferait clignoter le
   // bouton « nouveaux messages ».
   const programmaticScrollUntilRef = useRef(0);
+  // Horloge grossière : sert aux libellés « Aujourd'hui » / « Hier », qui
+  // n'ont pas besoin de la seconde près.
+  const [today, setToday] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setToday(Date.now()), 60_000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const timeline = useMemo(() => buildTimeline(messages), [messages]);
+
+  useEffect(() => storeDraft(draft), [draft]);
 
   const scrollToBottom = useCallback(() => {
     const viewport = scrollRef.current;
@@ -287,6 +432,15 @@ export function ChatPanel({ chat, active }: { chat: ChatController; active: bool
     );
   }, [messages, active, following]);
 
+  // Composeur auto-extensible : hauteur recalculée AVANT peinture pour ne pas
+  // laisser voir un saut d'une ligne à l'autre.
+  useLayoutEffect(() => {
+    const field = textareaRef.current;
+    if (!field) return;
+    field.style.height = "auto";
+    field.style.height = `${Math.min(field.scrollHeight, COMPOSER_MAX_HEIGHT_PX)}px`;
+  }, [draft]);
+
   const connected = wsState === "open" && gatewayConnected;
   const statusLabel =
     wsState === "connecting"
@@ -299,8 +453,12 @@ export function ChatPanel({ chat, active }: { chat: ChatController; active: bool
             ? "Gateway connectée"
             : "Gateway indisponible";
 
+  const tooLong = draft.length > MAX_CHAT_TEXT_LENGTH;
+  const showCounter = draft.length >= MAX_CHAT_TEXT_LENGTH * COUNTER_REVEAL_RATIO;
+  const canSend = connected && draft.trim().length > 0 && !tooLong;
+
   function submit() {
-    if (!connected || !draft.trim()) return;
+    if (!canSend) return;
     if (send(draft)) {
       setDraft("");
       // Envoyer vaut retour au bas du fil : on veut voir sa propre réponse.
@@ -308,15 +466,34 @@ export function ChatPanel({ chat, active }: { chat: ChatController; active: bool
     }
   }
 
+  // Nom volontairement non préfixé « use » : ce n'est pas un hook.
+  function applyStarter(text: string) {
+    setDraft(text);
+    textareaRef.current?.focus();
+  }
+
   return (
-    <section className="flex h-[calc(100vh-14rem)] min-h-[34rem] max-h-[54rem] flex-col overflow-hidden rounded-xl border border-white/8 bg-[var(--surface-panel)]">
-      <header className="flex min-h-16 items-center justify-between gap-3 border-b border-white/8 px-4 sm:px-5">
-        <div>
-          <h2 className="text-sm font-medium">Conversation</h2>
-          <p className="mt-1 text-xs text-[var(--text-muted)]">Session principale · miroir du canal d'origine</p>
-        </div>
-        <div className="flex items-center gap-2 rounded-full border border-white/8 bg-black/15 px-2.5 py-1.5 text-[11px] text-[var(--text-secondary)]" aria-live="polite">
-          <span className={`h-1.5 w-1.5 rounded-full ${connected ? "bg-emerald-400" : "bg-amber-400"}`} aria-hidden />
+    <section
+      className="flex h-[calc(100vh-14rem)] min-h-[34rem] max-h-[54rem] flex-col overflow-hidden rounded-xl border border-[var(--border-subtle)] bg-[var(--surface-panel)]"
+      onKeyDown={(event) => {
+        // Échap interrompt la réponse en cours, où que soit le focus dans le
+        // panneau — raccourci attendu de tout client de chat moderne.
+        if (event.key === "Escape" && activeRunId && !abortPending) {
+          event.preventDefault();
+          abort();
+        }
+      }}
+    >
+      <header className="flex min-h-14 items-center justify-between gap-3 border-b border-[var(--border-subtle)] px-4 sm:px-5">
+        <h2 className="text-sm font-semibold tracking-tight">Conversation</h2>
+        <div
+          className="flex items-center gap-2 rounded-full border border-[var(--border-subtle)] bg-black/20 px-2.5 py-1 text-2xs text-[var(--text-secondary)]"
+          aria-live="polite"
+        >
+          <span
+            className={`h-1.5 w-1.5 rounded-full ${connected ? "bg-[var(--status-good)]" : "bg-[var(--status-warning)]"}`}
+            aria-hidden
+          />
           <span className="hidden sm:inline">{statusLabel}</span>
           <span className="sm:hidden">{connected ? "Connecté" : "Hors ligne"}</span>
         </div>
@@ -329,7 +506,7 @@ export function ChatPanel({ chat, active }: { chat: ChatController; active: bool
       <div className="relative flex-1 overflow-hidden">
         <div
           ref={scrollRef}
-          className="h-full space-y-5 overflow-y-auto px-4 py-5 sm:px-6"
+          className="h-full space-y-4 overflow-y-auto px-4 py-5 sm:px-6"
           role="log"
           aria-live="polite"
           aria-label="Messages de la conversation"
@@ -342,31 +519,47 @@ export function ChatPanel({ chat, active }: { chat: ChatController; active: bool
           }}
         >
           {messages.length === 0 && (
-            <div className="flex h-full min-h-60 flex-col items-center justify-center text-center">
-              <div className="mb-4 flex h-11 w-11 items-center justify-center rounded-xl border border-white/8 bg-white/3 font-mono text-xs text-[var(--text-muted)]" aria-hidden>
-                &gt;_
-              </div>
+            <div className="flex h-full min-h-60 flex-col items-center justify-center px-2 text-center">
               <p className="text-sm font-medium text-[var(--text-secondary)]">La conversation est prête</p>
-              <p className="mt-2 max-w-xs text-xs leading-5 text-[var(--text-muted)]">
-                Les messages et appels d'outils de la session principale apparaîtront ici.
+              <p className="mt-2 max-w-sm text-xs leading-5 text-[var(--text-muted)]">
+                Les messages, appels d'outils et réponses de la session principale apparaissent ici — y
+                compris ceux échangés depuis WhatsApp.
               </p>
+              <ul className="mt-5 flex flex-wrap justify-center gap-2">
+                {STARTERS.map((starter) => (
+                  <li key={starter}>
+                    <button
+                      type="button"
+                      onClick={() => applyStarter(starter)}
+                      disabled={!connected}
+                      className="min-h-8 rounded-full border border-[var(--border-subtle)] bg-black/20 px-3 text-xs text-[var(--text-secondary)] transition hover:border-[var(--border-strong)] hover:bg-white/6 active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      {starter}
+                    </button>
+                  </li>
+                ))}
+              </ul>
             </div>
           )}
-          {messages.map((message) => {
-            const retryId = message.sendState === "failed" ? message.clientMessageId : undefined;
-            return (
-              <MessageBubble
-                key={message.id}
-                message={message}
-                onRetry={retryId ? () => retry(retryId) : undefined}
+
+          {timeline.map((item) =>
+            item.kind === "day" ? (
+              <DaySeparator key={item.key} timestamp={item.timestamp} now={today} />
+            ) : (
+              <GroupBlock
+                key={item.key}
+                group={item}
+                onRetry={retry}
                 retryDisabled={!connected}
+                // L'historique initial (ids `history-*`) n'est pas animé :
+                // l'animation signale un groupe NOUVEAU, pas le remplissage
+                // de la vue au chargement.
+                animate={!item.messages[0]?.id.startsWith("history-")}
               />
-            );
-          })}
+            ),
+          )}
         </div>
-        {/* Remonté dans le fil pendant que ça continue en bas : sans ce
-            repère, rien ne signale l'arrivée d'un message hors de vue —
-            l'autoscroll est justement désactivé dans ce cas. */}
+
         {unread > 0 && (
           // Centrage par flex et non par -translate-x-1/2 : l'animation
           // d'entrée anime `transform`, elle écraserait le centrage et le
@@ -378,7 +571,7 @@ export function ChatPanel({ chat, active }: { chat: ChatController; active: bool
                 setFollowing(true);
                 scrollToBottom();
               }}
-              className="clawdeck-enter pointer-events-auto flex min-h-9 items-center gap-2 rounded-full border border-emerald-300/25 bg-[var(--surface-raised)] px-4 text-xs font-medium text-emerald-200 shadow-lg shadow-black/40 transition hover:bg-white/8 active:scale-[0.97]"
+              className="clawdeck-enter pointer-events-auto flex min-h-9 items-center gap-2 rounded-full border border-emerald-300/25 bg-[var(--surface-overlay)] px-4 text-xs font-medium text-emerald-200 shadow-[var(--shadow-float)] transition hover:bg-white/8 active:scale-[0.97]"
             >
               <span aria-hidden>↓</span>
               {unread} nouveau{unread > 1 ? "x" : ""} message{unread > 1 ? "s" : ""}
@@ -387,18 +580,18 @@ export function ChatPanel({ chat, active }: { chat: ChatController; active: bool
         )}
       </div>
 
-      <div className="border-t border-white/8 bg-black/10 p-3 sm:p-4">
+      <div className="border-t border-[var(--border-subtle)] bg-black/15 p-3 sm:p-4">
         {activeRunId && (
-          <div className="clawdeck-enter mb-2 flex min-h-10 items-center justify-between gap-3 rounded-lg border border-amber-300/15 bg-amber-300/6 px-3 py-1.5">
+          <div className="clawdeck-enter mb-2 flex min-h-9 items-center justify-between gap-3 rounded-lg border border-amber-300/15 bg-amber-300/6 px-3 py-1.5">
             <span className="inline-flex items-center gap-2 text-xs text-[var(--text-secondary)]">
-              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-400" aria-hidden />
+              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-[var(--status-warning)]" aria-hidden />
               Réponse en cours
             </span>
             <button
               type="button"
               onClick={abort}
               disabled={abortPending || wsState !== "open"}
-              className="min-h-8 rounded-md border border-white/12 bg-black/20 px-3 text-xs text-[var(--text-primary)] transition hover:bg-white/8 active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-45"
+              className="min-h-7 rounded-md border border-[var(--border-strong)] bg-black/25 px-3 text-xs text-[var(--text-primary)] transition hover:bg-white/8 active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-45"
             >
               {abortPending ? "Interruption demandée…" : "Interrompre"}
             </button>
@@ -409,24 +602,22 @@ export function ChatPanel({ chat, active }: { chat: ChatController; active: bool
         <p className={abortError ? "mb-2 px-1 text-xs text-red-300" : "sr-only"} aria-live="polite">
           {abortError ? `Interruption impossible : ${abortError}` : ""}
         </p>
-        {/* Hors connexion, aucune route ne peut être affirmée : la pastille
-            d'état de l'en-tête porte déjà l'information. */}
-        {/* La clé remonte le badge quand la route change : son animation
-            d'entrée rejoue, seul signal visible d'une bascule du canal. */}
-        {connected && (
-          <DeliveryBadge key={deliveryRoute ? `${deliveryRoute.channel}:${deliveryRoute.to}` : "interne"} route={deliveryRoute} />
-        )}
+
         <form
-          className="rounded-xl border border-white/10 bg-black/20 p-2 transition-colors focus-within:border-emerald-300/25"
+          className="overflow-hidden rounded-xl border border-[var(--border-strong)] bg-black/25 transition-colors focus-within:border-emerald-300/30"
           onSubmit={(event) => {
             event.preventDefault();
             submit();
           }}
         >
-          <label htmlFor="chat-draft" className="sr-only">Message à OpenClaw</label>
+          {connected && <RouteHeader route={deliveryRoute} />}
+          <label htmlFor="chat-draft" className="sr-only">
+            Message à OpenClaw
+          </label>
           <textarea
             id="chat-draft"
-            rows={2}
+            ref={textareaRef}
+            rows={1}
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
             onKeyDown={(event) => {
@@ -443,17 +634,32 @@ export function ChatPanel({ chat, active }: { chat: ChatController; active: bool
                   : "Envoi indisponible tant que la gateway est hors ligne"
             }
             disabled={!connected}
-            className="max-h-32 min-h-12 w-full resize-none bg-transparent px-2 py-1.5 text-sm leading-6 text-[var(--text-primary)] outline-none placeholder:text-[var(--text-muted)] disabled:cursor-not-allowed disabled:opacity-50"
+            className="block max-h-[200px] min-h-11 w-full resize-none bg-transparent px-3 py-2.5 text-chat text-[var(--text-primary)] outline-none placeholder:text-[var(--text-muted)] disabled:cursor-not-allowed disabled:opacity-50"
           />
-          <div className="flex items-center justify-between gap-3 px-1 pt-1">
-            <p className="hidden text-[10px] text-[var(--text-muted)] sm:block">Entrée pour envoyer · Maj + Entrée pour une ligne</p>
-            <button
-              type="submit"
-              disabled={!connected || !draft.trim()}
-              className="ml-auto min-h-9 rounded-lg bg-emerald-300 px-4 text-xs font-semibold text-[var(--text-on-accent)] transition hover:bg-emerald-200 active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-35"
-            >
-              Envoyer
-            </button>
+          <div className="flex items-center justify-between gap-3 px-3 pb-2 pt-0.5">
+            <p className="hidden text-2xs text-[var(--text-muted)] sm:block">
+              Entrée pour envoyer · Maj + Entrée pour une ligne
+              {activeRunId && " · Échap pour interrompre"}
+            </p>
+            <div className="ml-auto flex items-center gap-3">
+              {/* Compteur révélé à l'approche de la limite seulement : afficher
+                  en permanence « 12 / 8 000 » serait du bruit. */}
+              {showCounter && (
+                <span
+                  className={`font-mono text-2xs ${tooLong ? "text-red-300" : "text-[var(--text-muted)]"}`}
+                  aria-live="polite"
+                >
+                  {draft.length.toLocaleString("fr-FR")} / {MAX_CHAT_TEXT_LENGTH.toLocaleString("fr-FR")}
+                </span>
+              )}
+              <button
+                type="submit"
+                disabled={!canSend}
+                className="min-h-8 rounded-lg bg-emerald-300 px-4 text-xs font-semibold text-[var(--text-on-accent)] transition hover:bg-emerald-200 active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-35"
+              >
+                Envoyer
+              </button>
+            </div>
           </div>
         </form>
       </div>

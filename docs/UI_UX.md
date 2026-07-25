@@ -50,8 +50,28 @@ statut comporte toujours un symbole ou point et un libellé.
 
 ### Typographie
 
-- Sans-serif système pour l'interface et le contenu.
+Superfamille **IBM Plex** (révision du 2026-07-25, remplace la sans-serif
+système) : `IBM Plex Sans Variable` pour l'interface et le contenu,
+`IBM Plex Mono` (400/500/600) pour les données.
+
+- **Auto-hébergées, sous-ensemble latin uniquement (~89 Ko).** Aucune requête
+  vers un CDN : la règle d'origine « aucune police téléchargée » visait les
+  dépendances externes, pas le poids. Elle reste respectée dans son intention —
+  rien n'est chargé depuis l'extérieur du tailnet, et l'interface fonctionne
+  hors ligne.
+- Le choix d'une superfamille est **structurel, pas décoratif** : clawdeck
+  affiche en permanence des heures, latences, chemins, noms d'outils et
+  payloads en monospace au contact du texte d'interface. Deux familles
+  assorties partagent hauteur d'x, graisse optique et dessin des chiffres, si
+  bien qu'une ligne comme « OpenClaw · 16:34 · via WhatsApp » cesse de
+  ressembler à deux polices qui se télescopent. Ne pas remplacer l'une des
+  deux isolément.
+- `font-variant-numeric: tabular-nums` global : heures, latences et compteurs
+  ne doivent pas gigoter en changeant de valeur.
 - Monospace pour heures, latences, identifiants, commandes et payloads.
+- Barème de tailles : `text-2xs` (11 px, micro-libellés) et `text-chat`
+  (15 px / 1,65, corps de conversation) sont définis dans `@theme`. Ne pas
+  réintroduire de `text-[10px]` ou `text-[11px]` ponctuels.
 - Casse phrase pour les titres et boutons. Les capitales sont réservées aux
   micro-labels de catégorie, avec un espacement de lettres modéré.
 - Une page possède un seul `h1`; les panels ont un `h2`; les cartes un `h3`.
@@ -120,6 +140,31 @@ doivent être nommés explicitement, jamais fusionnés dans un seul voyant ambig
   sont repliables et bornés pour ne pas écraser la conversation.
 - Un message optimiste doit ensuite être réconcilié avec un accusé ou marqué en
   échec ; il ne doit jamais disparaître silencieusement.
+- **Traitement asymétrique des deux interlocuteurs** (2026-07-25) : l'opérateur
+  écrit court — bulle compacte alignée à droite ; l'agent répond avec du code,
+  des tableaux et des appels d'outils — bloc pleine largeur adossé à un rail
+  vertical qui porte l'état de la réponse (en cours / interrompue / en erreur).
+  Ne pas ré-enfermer les réponses dans une bulle étroite : elle écrase ces
+  contenus sans rien apporter.
+- **Le composeur porte son destinataire.** La particularité du produit est que
+  ce qu'on tape part aussi sur un canal externe réel. La route de livraison est
+  affichée DANS le cadre du composeur (« ↗ WhatsApp · +33… », ou « Session
+  interne — la réponse ne sortira pas d'ici »), jamais en légende flottante :
+  une rupture de continuité doit être visible avant l'envoi, pas après la perte
+  d'un message.
+- Messages consécutifs de même auteur ET même provenance, à moins de 5 min
+  d'écart, sont regroupés sous un seul en-tête. Un changement de jour insère un
+  séparateur (« Aujourd'hui », « Hier », puis la date). Deux provenances
+  différentes ne se regroupent jamais : l'étiquette du groupe mentirait sur une
+  partie de son contenu.
+- Amorces de conversation : opérationnelles et propres à cet agent, jamais
+  génériques. Un clic remplit le composeur sans envoyer — l'agent agit sur une
+  vraie machine, la dernière relecture appartient à l'opérateur.
+- Échap interrompt la réponse en cours. Le compteur de caractères n'apparaît
+  qu'à 80 % de la limite ; l'afficher en permanence serait du bruit.
+- Les animations signalent un changement d'état réel (arrivée d'un message,
+  curseur d'écriture pendant le streaming, bascule de canal) et rien d'autre.
+  L'historique initial ne s'anime pas.
 
 ### Graphiques
 

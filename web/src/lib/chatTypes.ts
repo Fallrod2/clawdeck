@@ -2,6 +2,11 @@
 // format brut de la gateway OpenClaw (verbeux, non garanti stable — voir
 // hooks/useChat.ts qui fait la traduction).
 
+// Miroir de MAX_CHAT_TEXT_LENGTH (src/validate.ts) : le backend refuse
+// au-delà. Le composeur avertit AVANT d'envoyer plutôt que de laisser
+// l'utilisateur découvrir la limite sur un échec.
+export const MAX_CHAT_TEXT_LENGTH = 8_000;
+
 export type ToolCallPhase = "start" | "update" | "result";
 
 export interface ToolCall {

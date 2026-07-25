@@ -248,6 +248,17 @@ chat ne sont pas fiables tant qu'elles ne sont pas terminées.
   `navigator.clipboard` est ABSENT ici (http:// sur IP Tailscale = contexte
   non sécurisé, même contrainte que `crypto.randomUUID`) → retombée sur
   `document.execCommand` dans `web/src/lib/clipboard.ts`.
+- [x] Refonte typographique et d'usage du chat (fait le 2026-07-25) :
+  superfamille IBM Plex auto-hébergée (latin, ~89 Ko, aucun CDN — voir
+  UI_UX.md §3 pour la justification structurelle), barème `text-2xs` /
+  `text-chat`, présentation asymétrique (bulle pour l'opérateur, bloc pleine
+  largeur à rail d'état pour l'agent), regroupement des messages et
+  séparateurs de jour (`web/src/lib/timeline.ts`, 15 tests), composeur
+  auto-extensible portant sa route de livraison, amorces opérationnelles,
+  Échap pour interrompre, compteur à 80 % de la limite, brouillon persisté.
+- [ ] Rendu visuel jamais vérifié à l'œil : aucun navigateur exploitable sur
+  le Mac mini headless (Safari sans session GUI). Les utilitaires générés et
+  les URL de polices ont été vérifiés dans le CSS buildé, pas l'apparence.
 - [ ] Vérifier la livraison WhatsApp par un test d'intégration reproductible :
   message envoyé depuis le dashboard, réponse visible dans le dashboard et dans
   le canal d'origine, sans doublon.
