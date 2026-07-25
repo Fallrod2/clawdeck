@@ -7,6 +7,8 @@
 // message qui dit quoi corriger, sans jamais divulguer la valeur d'un secret
 // (voir docs/REVUE-2026-07-17.md, constats backend 1, 6, 7).
 
+import type { NtfyConfig } from "./notify";
+
 type EnvSource = Record<string, string | undefined>;
 
 function requiredFrom(source: EnvSource, name: string): string {
@@ -203,6 +205,69 @@ function parsePath(
   return trimmed;
 }
 
+// Topic ntfy : mot unique, sans « / » ni « . ». La contrainte est celle de
+// ntfy, mais elle sert aussi de garde ici — le topic part dans une requête
+// sortante, et un caractère de chemin y aurait sa place pour viser une autre
+// route du serveur.
+const NTFY_TOPIC_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
+
+// NTFY_URL : URL du SERVEUR seule (le topic voyage à part). Refuse tout ce qui
+// n'a rien à faire là : identifiants dans l'URL — qui fuiraient dans le
+// moindre message d'erreur — paramètres et ancre.
+function parseNtfyUrl(raw: string): string {
+  const url = new URL(parseHttpUrl("NTFY_URL", raw));
+  if (url.username || url.password) {
+    throw new Error(
+      "NTFY_URL ne doit pas contenir d'identifiants (https://user:mdp@…) : utiliser NTFY_TOKEN.",
+    );
+  }
+  if (url.search || url.hash) {
+    throw new Error(
+      "NTFY_URL ne doit porter ni paramètre de requête ni ancre : seulement le serveur (ex. https://ntfy.sh/).",
+    );
+  }
+  // Toujours terminée par « / » : la publication se fait sur la racine du
+  // serveur, en JSON (voir relayToNtfy dans notify.ts).
+  return url.pathname.endsWith("/") ? url.href : `${url.href}/`;
+}
+
+// NTFY_URL / NTFY_TOPIC / NTFY_TOKEN : le relais push est OPTIONNEL et son
+// absence est un état légitime, rapporté tel quel par /api/notify (« relais non
+// configuré »). En revanche une configuration À MOITIÉ remplie est une erreur
+// de démarrage : elle produirait un relais qui échoue à chaque notification
+// sans que personne ne sache pourquoi — exactement l'échec silencieux que la
+// phase 3 doit exclure.
+function parseNtfy(source: EnvSource): NtfyConfig | null {
+  const url = source.NTFY_URL?.trim() ?? "";
+  const topic = source.NTFY_TOPIC?.trim() ?? "";
+  const token = source.NTFY_TOKEN?.trim() ?? "";
+
+  if (!url && !topic) {
+    if (token) {
+      throw new Error(
+        "NTFY_TOKEN est défini sans NTFY_URL ni NTFY_TOPIC : compléter la configuration du relais ou retirer la variable.",
+      );
+    }
+    return null;
+  }
+  if (!url || !topic) {
+    throw new Error(
+      `Relais ntfy incomplet : ${url ? "NTFY_TOPIC" : "NTFY_URL"} manque (renseigner les deux, ou aucune des deux pour désactiver le relais).`,
+    );
+  }
+  if (!NTFY_TOPIC_PATTERN.test(topic)) {
+    throw new Error(
+      "NTFY_TOPIC doit être un nom de topic simple : lettres, chiffres, « - » ou « _ », 64 caractères au plus.",
+    );
+  }
+  if (token === "change-me") {
+    throw new Error(
+      "NTFY_TOKEN a gardé la valeur d'exemple « change-me » : renseigner un jeton d'accès ntfy, ou retirer la variable pour un topic public.",
+    );
+  }
+  return { url: parseNtfyUrl(url), topic, token: token || null };
+}
+
 // Valide une source d'environnement complète et renvoie l'objet de config.
 // Pure (n'accède pas à process.env) pour rester testable — voir env.test.ts.
 export function parseEnv(source: EnvSource) {
@@ -227,6 +292,9 @@ export function parseEnv(source: EnvSource) {
     ollamaFallbackModel: source.OLLAMA_FALLBACK_MODEL ?? "qwen3.5:9b",
     // Si vide, auto-détectée via `route -n get default` (voir network.ts).
     orangeGatewayIp: parseOrangeGatewayIp(source.ORANGE_GATEWAY_IP),
+    // null = relais push désactivé (voir parseNtfy) ; /api/notify le rapporte
+    // alors comme « non configuré », jamais comme une panne.
+    ntfy: parseNtfy(source),
     dbPath: parsePath(source.DB_PATH, "DB_PATH", "./data/clawdeck.sqlite"),
     gatewayDeviceIdentityPath: parsePath(
       source.GATEWAY_DEVICE_IDENTITY_PATH,

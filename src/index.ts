@@ -22,6 +22,15 @@ import { LogTailer } from "./log-tailer";
 import { normalizeLogTail, type DashboardLogEntry } from "./logs";
 import { saveWorkspaceFile, WorkspaceWriteError } from "./workspace";
 import {
+  NotificationHub,
+  NotifyService,
+  MAX_NOTIFY_BODY_BYTES,
+  NOTIFY_KEEPALIVE_MS,
+  NOTIFY_PAYLOAD_VERSION,
+  NOTIFY_STREAM_QUEUE_MAX,
+  type NotificationEvent,
+} from "./notify";
+import {
   readOpenClawRuntime,
   unavailableOpenClawRuntime,
 } from "./openclaw-status";
@@ -230,6 +239,124 @@ app.get("/api/pings/history", (c) => {
 
 // Rétention 7 jours (voir RETENTION_MS dans db.ts) ; armée au démarrage.
 let pruneTimer: ReturnType<typeof setInterval> | null = null;
+
+// --- Notifications (phase 3) : POST /api/notify → navigateurs + ntfy ---
+// La garde bearer de /api/* couvre déjà ces deux routes (voir security.ts).
+// Rien n'est persisté : une notification vit le temps de sa diffusion.
+
+const notifications = new NotificationHub();
+const notifyService = new NotifyService({ hub: notifications, ntfy: getEnv().ntfy });
+
+app.post("/api/notify", async (c) => {
+  // Deux bornes successives : l'annonce content-length évite d'avaler un corps
+  // manifestement trop gros, la taille réelle rattrape un en-tête absent ou
+  // menteur — c'est la seconde qui protège vraiment.
+  const announced = Number(c.req.header("content-length") ?? 0);
+  const tooLarge = () =>
+    c.json(
+      {
+        v: NOTIFY_PAYLOAD_VERSION,
+        code: "body-too-large" as const,
+        error: `corps de requête trop volumineux (max ${MAX_NOTIFY_BODY_BYTES} octets)`,
+      },
+      413,
+    );
+  if (announced > MAX_NOTIFY_BODY_BYTES) return tooLarge();
+
+  const raw = await c.req.text();
+  if (raw.length > MAX_NOTIFY_BODY_BYTES) return tooLarge();
+
+  let body: unknown;
+  try {
+    body = JSON.parse(raw);
+  } catch {
+    return c.json(
+      { v: NOTIFY_PAYLOAD_VERSION, code: "invalid-json" as const, error: "JSON invalide" },
+      400,
+    );
+  }
+
+  const result = await notifyService.submit(body, c.req.header("Idempotency-Key") ?? null);
+  if (result.retryAfterSeconds !== undefined) {
+    c.header("Retry-After", String(result.retryAfterSeconds));
+  }
+  return c.json(result.body, result.status);
+});
+
+// Flux des notifications, sur le même motif que /api/status et /api/logs :
+// un abonnement, une file par client, une boucle qui écrit ce qui attend.
+// La différence tient à ce qui est diffusé — des ÉVÉNEMENTS distincts, pas un
+// état. Un client lent ne peut donc pas se contenter du dernier reçu comme le
+// fait /api/status : la file les conserve tous, jusqu'à sa borne.
+app.get("/api/notifications", (c) => {
+  return streamSSE(c, async (stream) => {
+    let closed = false;
+    let pending: NotificationEvent[] = [];
+    let dropped = 0;
+    let keepAlive = false;
+    let wake: (() => void) | null = null;
+
+    const notify = () => {
+      const resolve = wake;
+      wake = null;
+      resolve?.();
+    };
+    const unsubscribe = notifications.subscribe((event) => {
+      pending.push(event);
+      if (pending.length > NOTIFY_STREAM_QUEUE_MAX) {
+        dropped += pending.length - NOTIFY_STREAM_QUEUE_MAX;
+        pending = pending.slice(-NOTIFY_STREAM_QUEUE_MAX);
+      }
+      notify();
+    });
+    const keepAliveTimer = setInterval(() => {
+      keepAlive = true;
+      notify();
+    }, NOTIFY_KEEPALIVE_MS);
+
+    stream.onAbort(() => {
+      closed = true;
+      notify();
+    });
+
+    try {
+      // Commentaire SSE d'ouverture : il ne porte aucune donnée (les parseurs
+      // du front n'y voient aucune ligne `data:`) mais prouve tout de suite que
+      // le flux est vivant, ce qu'aucune notification ne fera peut-être avant
+      // des heures.
+      await stream.write(": ouverture\n\n");
+      while (!closed) {
+        if (pending.length === 0 && dropped === 0 && !keepAlive) {
+          await new Promise<void>((resolve) => {
+            wake = resolve;
+          });
+        }
+        if (closed) break;
+        if (keepAlive) {
+          keepAlive = false;
+          await stream.write(": keep-alive\n\n");
+        }
+        if (dropped > 0) {
+          // Une perte se dit : un client qui a décroché doit pouvoir afficher
+          // « n notifications manquées » plutôt que d'ignorer le trou.
+          const count = dropped;
+          dropped = 0;
+          await stream.writeSSE({
+            event: "notifications-dropped",
+            data: JSON.stringify({ type: "notifications-dropped", count }),
+          });
+        }
+        while (pending.length > 0) {
+          const event = pending.shift() as NotificationEvent;
+          await stream.writeSSE({ event: "notification", data: JSON.stringify(event) });
+        }
+      }
+    } finally {
+      clearInterval(keepAliveTimer);
+      unsubscribe();
+    }
+  });
+});
 
 // --- Chat (phase 2) : relais WS entre le front et la gateway OpenClaw ---
 // Le dashboard ne maintient qu'UNE connexion vers la gateway (auth par

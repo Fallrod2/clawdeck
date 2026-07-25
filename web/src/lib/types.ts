@@ -43,6 +43,16 @@ export interface OpenClawRuntimeStatus {
   error?: string;
 }
 
+// Conclusion réseau calculée par le backend (src/network-diagnosis.ts) : le
+// front ne la recalcule pas, il la RESTITUE. Distinguer une coupure locale
+// d'une coupure en amont est une décision, elle appartient à un endroit
+// unique et testable.
+export interface NetworkDiagnosis {
+  severity: "good" | "warning" | "critical";
+  headline: string;
+  detail: string;
+}
+
 export interface StatusPayload {
   timestamp: number;
   gateway: HttpCheck;
@@ -53,6 +63,9 @@ export interface StatusPayload {
     orange: PingCheck;
     remote: PingCheck;
   };
+  // Optionnel : un backend plus ancien que ce front n'en émet pas, l'interface
+  // affiche alors « Diagnostic en attente » plutôt que de planter.
+  network?: NetworkDiagnosis;
 }
 
 export interface PingRow {

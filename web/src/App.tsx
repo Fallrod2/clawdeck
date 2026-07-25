@@ -29,6 +29,36 @@ const TABS = [
 ] as const;
 type TabId = (typeof TABS)[number]["id"];
 
+// Bandeau de conclusion : même habillage pour le résumé global et pour le
+// diagnostic réseau, afin que deux conclusions de même nature se lisent de la
+// même façon. Toujours symbole + libellé + couleur, jamais la couleur seule
+// (UI_UX §4) ; « en attente » garde le ton ambre neutre admis pour cet état.
+const CALLOUT_TONES: Record<Tone, { shell: string; badge: string; symbol: string }> = {
+  good: {
+    shell: "border-emerald-300/12 bg-emerald-300/6",
+    badge: "bg-emerald-300/12 text-emerald-200",
+    symbol: "✓",
+  },
+  warning: {
+    shell: "border-amber-300/12 bg-amber-300/6",
+    badge: "bg-amber-300/12 text-amber-200",
+    symbol: "!",
+  },
+  critical: {
+    shell: "border-red-300/12 bg-red-300/6",
+    badge: "bg-red-300/12 text-red-200",
+    symbol: "!",
+  },
+  unknown: {
+    shell: "border-amber-300/12 bg-amber-300/6",
+    badge: "bg-amber-300/12 text-amber-200",
+    symbol: "…",
+  },
+};
+
+// Miroir local du champ `network` du payload SSE — source de vérité :
+// src/network-diagnosis.ts. Sa place définitive est lib/types.ts, auprès des
+// autres miroirs du payload backend.
 function toneForCheck(check: { ok: boolean } | null | undefined): Tone {
   if (!check) return "unknown";
   return check.ok ? "good" : "critical";
@@ -103,6 +133,34 @@ export default function App() {
     if (failures === 0) return { tone: "good" as Tone, label: "Tous les systèmes sondés répondent" };
     if (failures === 1) return { tone: "warning" as Tone, label: "Un système demande votre attention" };
     return { tone: "critical" as Tone, label: `${failures} systèmes sont indisponibles` };
+  }, [status, dataStale]);
+
+  // Conclusion réseau : le résumé ci-dessus COMPTE les sondes en échec, il ne
+  // dit pas ce qu'elles signifient ensemble. Trois pastilles rouges valent
+  // aussi bien une coupure du lien local qu'une rupture d'accès opérateur —
+  // deux diagnostics opposés. Le verdict lui-même est calculé côté backend
+  // (src/network-diagnosis.ts, logique pure et testée) ; il ne reste ici que
+  // le choix de l'affirmer ou non.
+  const networkCallout = useMemo(() => {
+    const network = status?.network;
+    if (!network) {
+      return {
+        tone: "unknown" as Tone,
+        headline: "Diagnostic en attente",
+        detail: "Première série de sondes réseau en cours.",
+      };
+    }
+    // Un diagnostic est une AFFIRMATION : sur une mesure qui a vieilli, plus
+    // rien ne la soutient. On la cite comme dernière conclusion connue plutôt
+    // que de la laisser passer pour l'état courant.
+    if (dataStale) {
+      return {
+        tone: "unknown" as Tone,
+        headline: "Diagnostic suspendu",
+        detail: `Dernière conclusion connue : « ${network.headline} ». Le flux de statut a cessé d'arriver, aucune mesure récente ne la confirme.`,
+      };
+    }
+    return { tone: network.severity as Tone, headline: network.headline, detail: network.detail };
   }, [status, dataStale]);
 
   if (!token) {
@@ -249,28 +307,40 @@ export default function App() {
             </section>
 
             <section
-              className={`mb-4 flex items-center gap-3 rounded-xl border px-4 py-3 ${
-                overall.tone === "good"
-                  ? "border-emerald-300/12 bg-emerald-300/6"
-                  : overall.tone === "critical"
-                    ? "border-red-300/12 bg-red-300/6"
-                    : "border-amber-300/12 bg-amber-300/6"
-              }`}
+              className={`mb-3 flex items-center gap-3 rounded-xl border px-4 py-3 ${CALLOUT_TONES[overall.tone].shell}`}
               aria-live="polite"
             >
               <span
-                className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs ${
-                  overall.tone === "good"
-                    ? "bg-emerald-300/12 text-emerald-200"
-                    : overall.tone === "critical"
-                      ? "bg-red-300/12 text-red-200"
-                      : "bg-amber-300/12 text-amber-200"
-                }`}
+                className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs ${CALLOUT_TONES[overall.tone].badge}`}
                 aria-hidden
               >
-                {overall.tone === "good" ? "✓" : overall.tone === "unknown" ? "…" : "!"}
+                {CALLOUT_TONES[overall.tone].symbol}
               </span>
               <p className="text-sm text-[var(--text-secondary)]">{overall.label}</p>
+            </section>
+
+            <section
+              className={`mb-4 flex items-start gap-3 rounded-xl border px-4 py-3 ${CALLOUT_TONES[networkCallout.tone].shell}`}
+              aria-label="Diagnostic réseau"
+              aria-live="polite"
+            >
+              <span
+                className={`mt-px flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs ${CALLOUT_TONES[networkCallout.tone].badge}`}
+                aria-hidden
+              >
+                {CALLOUT_TONES[networkCallout.tone].symbol}
+              </span>
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-[var(--text-primary)]">
+                  <span className="mr-2 align-middle text-2xs font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">
+                    Réseau
+                  </span>
+                  {networkCallout.headline}
+                </p>
+                <p className="mt-1 text-xs leading-5 text-[var(--text-secondary)]">
+                  {networkCallout.detail}
+                </p>
+              </div>
             </section>
 
             <section className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3" aria-label="État des services">

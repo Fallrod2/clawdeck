@@ -37,6 +37,9 @@ describe("parseEnv", () => {
       ollamaUrl: "http://127.0.0.1:11434",
       ollamaFallbackModel: "qwen3.5:9b",
       orangeGatewayIp: "192.168.1.1",
+      // Relais push absent de la source : « non configuré », pas une erreur
+      // (voir parseNtfy et notify.test.ts pour les cas de configuration).
+      ntfy: null,
       dbPath: "./data/clawdeck.sqlite",
       gatewayDeviceIdentityPath: "./data/gateway-device-identity.json",
     });

@@ -3,7 +3,13 @@
 import { getEnv } from "./env";
 import { checkGateway, checkOllama, type HttpCheckResult, type OllamaCheckResult } from "./checks";
 import { insertPing } from "./db";
-import { detectDefaultGateway, ping, type PingResult } from "./network";
+import {
+  detectDefaultGateway,
+  ping,
+  reportDefaultGatewayProbe,
+  type PingResult,
+} from "./network";
+import { diagnoseNetwork, type NetworkDiagnosis } from "./network-diagnosis";
 import type { OpenClawRuntimeStatus } from "./openclaw-status";
 
 const CLOUDFLARE_HOST = "1.1.1.1";
@@ -22,6 +28,9 @@ export interface StatusPayload {
     orange: PingResult & { host: string };
     remote: PingResult & { host: string };
   };
+  // Conclusion opérationnelle des trois sondes ci-dessus : trois pastilles
+  // rouges ne disent pas si la panne est locale ou en amont (network-diagnosis.ts).
+  network: NetworkDiagnosis;
 }
 
 export async function collectStatus(
@@ -40,6 +49,11 @@ export async function collectStatus(
     ping(REMOTE_HOST),
   ]);
 
+  // Boucle de retour vers la détection : c'est ce qui fait tomber le cache de
+  // passerelle quand la route par défaut a bougé, au lieu de sonder
+  // indéfiniment une adresse abandonnée (voir network.ts).
+  reportDefaultGatewayProbe(orangeGatewayIp, orangePing.ok);
+
   insertPing("cloudflare", CLOUDFLARE_HOST, cloudflarePing.ok, cloudflarePing.latencyMs);
   insertPing("orange", orangeGatewayIp, orangePing.ok, orangePing.latencyMs);
   insertPing("remote", REMOTE_HOST, remotePing.ok, remotePing.latencyMs);
@@ -54,5 +68,10 @@ export async function collectStatus(
       orange: { host: orangeGatewayIp, ...orangePing },
       remote: { host: REMOTE_HOST, ...remotePing },
     },
+    network: diagnoseNetwork({
+      local: { host: orangeGatewayIp, ok: orangePing.ok },
+      internet: { host: CLOUDFLARE_HOST, ok: cloudflarePing.ok },
+      remote: { host: REMOTE_HOST, ok: remotePing.ok },
+    }),
   };
 }
