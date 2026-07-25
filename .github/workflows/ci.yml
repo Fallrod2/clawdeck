@@ -1,6 +1,8 @@
-# CI clawdeck : installe avec lockfiles figés, vérifie tout, build le front.
+# CI clawdeck : installe avec lockfiles figés, vérifie tout, build le front,
+# puis exerce l'interface réelle dans un navigateur headless.
 # Aucune instance OpenClaw/Ollama n'est requise : les tests unitaires utilisent
-# des fakes (voir TODO.md P4) et la validation d'env n'est exercée qu'en test.
+# des doublures, et le test de fumée démarre une instance JETABLE dont la
+# gateway pointe volontairement sur un port fermé.
 name: CI
 
 on:
@@ -34,3 +36,42 @@ jobs:
 
       - name: Build de production du front
         run: bun run build
+
+  fumee:
+    # Séparé de `check` : ce travail télécharge un navigateur et démarre un
+    # vrai serveur. Le garder à part laisse la vérification rapide donner son
+    # verdict sans attendre, et rend la cause d'un échec évidente.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Installer les dépendances (lockfiles figés)
+        run: |
+          bun install --frozen-lockfile
+          bun install --frozen-lockfile --cwd web
+
+      # Le navigateur pèse ~95 Mo : sans ce cache, chaque exécution le
+      # retélécharge et le test de fumée coûte plus cher que tout le reste.
+      - name: Cache du navigateur headless
+        id: cache-navigateur
+        uses: actions/cache@v4
+        with:
+          path: ~/Library/Caches/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+
+      - name: Installer Chromium
+        if: steps.cache-navigateur.outputs.cache-hit != 'true'
+        run: bunx playwright install chromium
+
+      - name: Build de production du front
+        run: bun run build
+
+      # Ce que ce test attrape et qu'aucun test unitaire ne voit : une porte
+      # d'authentification cassée, un onglet qui ne s'ouvre plus, une violation
+      # de CSP, un débordement horizontal, une exception au rendu.
+      - name: Test de fumée de l'interface
+        run: bun scripts/smoke.ts
