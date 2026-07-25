@@ -64,6 +64,20 @@ export function LogsPanel({ token, active }: { token: string | null; active: boo
 
   const connected = state === "open";
   const authRequired = state === "auth";
+  // « Reconnexion » sur une PREMIÈRE connexion est un mensonge inquiétant :
+  // rien n'a été perdu, le flux s'ouvre simplement. On ne parle de
+  // reconnexion qu'après avoir été connecté au moins une fois.
+  const dejaConnecte = useRef(false);
+  if (connected) dejaConnecte.current = true;
+  const etatLabel = paused
+    ? "En pause"
+    : connected
+      ? "En direct"
+      : authRequired
+        ? "Authentification requise"
+        : dejaConnecte.current
+          ? "Reconnexion"
+          : "Connexion au flux";
 
   return (
     <section className="overflow-hidden rounded-xl border border-white/8 bg-[var(--surface-panel)]">
@@ -78,7 +92,7 @@ export function LogsPanel({ token, active }: { token: string | null; active: boo
               className={`h-1.5 w-1.5 rounded-full ${paused ? "bg-neutral-500" : connected ? "bg-emerald-400" : authRequired ? "bg-red-400" : "bg-amber-400"}`}
               aria-hidden
             />
-            {paused ? "En pause" : connected ? "En direct" : authRequired ? "Authentification requise" : "Reconnexion"}
+            {etatLabel}
           </span>
         </div>
 
@@ -89,7 +103,7 @@ export function LogsPanel({ token, active }: { token: string | null; active: boo
             type="search"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            placeholder="Sous-système ou message"
+            placeholder="Filtrer…"
             className="min-h-9 w-full rounded-lg border border-white/8 bg-black/15 px-3 text-xs outline-none placeholder:text-[var(--text-muted)] focus:border-emerald-300/30 sm:w-52"
           />
           <button
