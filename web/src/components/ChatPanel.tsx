@@ -11,6 +11,7 @@ import remarkGfm from "remark-gfm";
 const REMARK_PLUGINS = [remarkGfm];
 import type { ChatMessage, DeliveryRoute, ToolCall } from "../lib/chatTypes";
 import type { ChatController } from "../hooks/useChat";
+import { ActivityStrip } from "./ActivityStrip";
 
 // Noms de canaux OpenClaw → libellé humain. Un canal inconnu est affiché tel
 // quel plutôt que masqué : mieux vaut un nom brut qu'une provenance perdue.
@@ -191,8 +192,19 @@ function MessageBubble({
 }
 
 export function ChatPanel({ chat, active }: { chat: ChatController; active: boolean }) {
-  const { messages, wsState, gatewayConnected, deliveryRoute, activeRunId, abortPending, abortError, send, retry, abort } =
-    chat;
+  const {
+    messages,
+    wsState,
+    gatewayConnected,
+    deliveryRoute,
+    activity,
+    activeRunId,
+    abortPending,
+    abortError,
+    send,
+    retry,
+    abort,
+  } = chat;
   const [draft, setDraft] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
   const followMessagesRef = useRef(true);
@@ -241,6 +253,10 @@ export function ChatPanel({ chat, active }: { chat: ChatController; active: bool
           <span className="sm:hidden">{connected ? "Connecté" : "Hors ligne"}</span>
         </div>
       </header>
+
+      {/* Résumé opérationnel du panneau, avant le détail (UI_UX.md §2) : ce
+          que fait l'agent maintenant, y compris pour un run venu d'ailleurs. */}
+      <ActivityStrip activity={activity} connected={connected} />
 
       <div
         ref={scrollRef}

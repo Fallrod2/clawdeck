@@ -4,7 +4,10 @@
     "target": "es2023",
     "lib": ["ES2023", "DOM"],
     "module": "esnext",
-    "types": ["vite/client"],
+    /* "bun" : les tests de logique pure du front (lib/*.test.ts) tournent
+       sous `bun test` avec le reste de la suite. Ils ne sont jamais importés
+       par l'application, donc jamais embarqués dans le bundle. */
+    "types": ["vite/client", "bun"],
     "allowArbitraryExtensions": true,
     "skipLibCheck": true,
 

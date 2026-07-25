@@ -229,6 +229,13 @@ chat ne sont pas fiables tant qu'elles ne sont pas terminées.
   se perde. Étiquetage conditionné à `sourceChannel` externe ET à une identité
   d'expéditeur, pour ne jamais taguer nos propres envois (qui épinglent
   `originatingChannel: whatsapp`).
+- [x] Bandeau d'activité live (fait le 2026-07-25) : `ActivityStrip` sous
+  l'en-tête du chat, alimenté par les flux `agent` (`tool`, `approval`,
+  heartbeats écartés) et `chat`. Montre l'outil en cours, l'ancienneté, si le
+  run vient du dashboard ou d'ailleurs, et l'attente d'autorisation (état
+  bloquant). Un run muet plus de 90 s est écarté plutôt qu'affiché « en
+  cours » indéfiniment. Logique pure isolée dans `web/src/lib/activity.ts`
+  (9 tests) — premiers tests front du projet, `bun test` les ramasse.
 - [ ] Vérifier la livraison WhatsApp par un test d'intégration reproductible :
   message envoyé depuis le dashboard, réponse visible dans le dashboard et dans
   le canal d'origine, sans doublon.

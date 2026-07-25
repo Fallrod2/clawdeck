@@ -42,6 +42,22 @@ export interface ChatMessage {
   origin?: MessageOrigin;
 }
 
+// Activité d'un run de l'agent, reconstruite depuis les événements `agent`
+// (enveloppe { runId, stream, ts, data }) et `chat`. Sert le bandeau
+// d'activité : ce qu'OpenClaw fait MAINTENANT, y compris pour un run qu'on
+// n'a pas initié (message WhatsApp, tâche planifiée) — invisible autrement.
+export interface RunActivity {
+  runId: string;
+  // Initié depuis ce dashboard (runId accusé par send-ok).
+  own: boolean;
+  startedAt: number;
+  lastEventAt: number;
+  // Dernier outil signalé par le flux `tool` (null avant le premier).
+  tool: { name: string; phase: ToolCallPhase } | null;
+  // Flux `approval` : le run est bloqué tant qu'une autorisation manque.
+  waitingApproval: boolean;
+}
+
 // Route de livraison épinglée par le backend sur chaque envoi (voir
 // gateway/client.ts) : null = aucune route externe connue, la réponse
 // restera dans la session sans repartir sur le téléphone.

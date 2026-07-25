@@ -12,7 +12,9 @@ import {
   type DeliveryRoute,
   type GatewayConnectionState,
   type MessageOrigin,
+  type RunActivity,
   type ToolCall,
+  type ToolCallPhase,
 } from "../lib/chatTypes";
 
 // crypto.randomUUID() exige un contexte sécurisé (HTTPS ou localhost) — le
@@ -128,6 +130,12 @@ export function useChat(token: string | null) {
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
   const [abortPending, setAbortPending] = useState(false);
   const [abortError, setAbortError] = useState<string | null>(null);
+  // Runs en cours, y compris ceux qu'on n'a PAS initiés (message WhatsApp,
+  // tâche planifiée) : c'est tout l'intérêt du bandeau d'activité, ces
+  // runs-là n'ont aucune trace visible tant que leur réponse n'arrive pas.
+  const [activity, setActivity] = useState<RunActivity[]>([]);
+  // runIds accusés par send-ok : distingue « votre demande » d'un run externe.
+  const ownRunIds = useRef(new Set<string>());
   const wsRef = useRef<WebSocket | null>(null);
   const runIdToMessageId = useRef(new Map<string, string>());
   // Miroir de l'état courant pour retry() : évite de recréer le callback à
@@ -175,6 +183,40 @@ export function useChat(token: string | null) {
     [capMessages],
   );
 
+  // Crée ou rafraîchit l'entrée d'activité d'un run. Toute mise à jour vaut
+  // signe de vie : lastEventAt sert au bandeau à écarter un run dont plus
+  // rien n'arrive (gateway coupée en plein run) plutôt que de l'afficher
+  // « en cours » indéfiniment.
+  const touchRun = useCallback((runId: string, patch: Partial<RunActivity>) => {
+    setActivity((prev) => {
+      const now = Date.now();
+      const index = prev.findIndex((r) => r.runId === runId);
+      if (index === -1) {
+        return [
+          ...prev,
+          {
+            runId,
+            own: ownRunIds.current.has(runId),
+            startedAt: now,
+            lastEventAt: now,
+            tool: null,
+            waitingApproval: false,
+            ...patch,
+          },
+        ];
+      }
+      const next = prev.slice();
+      next[index] = { ...next[index]!, lastEventAt: now, own: ownRunIds.current.has(runId), ...patch };
+      return next;
+    });
+  }, []);
+
+  // Run terminé : il sort du bandeau, sa trace reste dans la conversation.
+  const endRun = useCallback((runId: string) => {
+    setActivity((prev) => prev.filter((r) => r.runId !== runId));
+    ownRunIds.current.delete(runId);
+  }, []);
+
   const handleChatEvent = useCallback(
     (payload: unknown) => {
       const p = asRecord(payload);
@@ -213,25 +255,46 @@ export function useChat(token: string | null) {
       // pour un run initié hors dashboard), un état terminal le libère.
       if (state === "delta") {
         setActiveRunId(runId);
+        touchRun(runId, {});
       } else if (state === "final" || state === "aborted" || state === "error") {
         setActiveRunId((prev) => (prev === runId ? null : prev));
+        endRun(runId);
       }
     },
-    [upsertAssistantMessage],
+    [upsertAssistantMessage, touchRun, endRun],
   );
 
   const handleAgentEvent = useCallback(
     (payload: unknown) => {
       const p = asRecord(payload);
-      if (!p || p.stream !== "tool") return;
+      // Battement de cœur : preuve de liaison, pas d'activité de l'agent.
+      if (!p || p.isHeartbeat === true) return;
       const runId = asString(p.runId);
+      if (!runId) return;
+
+      // Flux `approval` : le run est SUSPENDU tant que l'autorisation manque.
+      // État bloquant, donc le plus utile à rendre visible — sans lui, un run
+      // en attente est indiscernable d'un run qui travaille.
+      if (p.stream === "approval") {
+        touchRun(runId, { waitingApproval: true });
+        return;
+      }
+      if (p.stream !== "tool") return;
       const data = asRecord(p.data);
-      const toolCallId = asString(data?.toolCallId);
-      if (!runId || !data || !toolCallId) return;
+      if (!data) return;
+
+      const phase: ToolCallPhase =
+        data.phase === "result" ? "result" : data.phase === "update" ? "update" : "start";
+      const toolName = asString(data.name) ?? "outil";
+      // Un événement d'outil vaut reprise : si une autorisation bloquait le
+      // run, elle vient d'être accordée.
+      touchRun(runId, { tool: { name: toolName, phase }, waitingApproval: false });
+
+      const toolCallId = asString(data.toolCallId);
+      if (!toolCallId) return;
 
       upsertAssistantMessage(runId, (msg) => {
         const existing = msg.toolCalls.find((t) => t.id === toolCallId);
-        const phase = data.phase === "result" ? "result" : data.phase === "update" ? "update" : "start";
         const next: ToolCall = {
           id: toolCallId,
           name: asString(data.name) ?? existing?.name ?? "outil",
@@ -247,7 +310,7 @@ export function useChat(token: string | null) {
         return { ...msg, toolCalls };
       });
     },
-    [upsertAssistantMessage],
+    [upsertAssistantMessage, touchRun],
   );
 
   // Miroir live : messages ajoutés à la session côté gateway (WhatsApp entrant
@@ -418,8 +481,10 @@ export function useChat(token: string | null) {
             if (!frame.connected) {
               setActiveRunId(null);
               // Gateway perdue : la route connue ne vaut plus rien, ne pas
-              // laisser le composeur promettre une livraison WhatsApp.
+              // laisser le composeur promettre une livraison WhatsApp, ni le
+              // bandeau affirmer qu'un run est toujours en cours.
               setDeliveryRoute(null);
+              setActivity([]);
             }
             break;
           case "delivery-route":
@@ -450,7 +515,13 @@ export function useChat(token: string | null) {
                   : msg,
               ),
             );
-            if (frame.runId) setActiveRunId(frame.runId);
+            if (frame.runId) {
+              setActiveRunId(frame.runId);
+              // Ce run est le nôtre : le bandeau le dira « votre demande »
+              // plutôt que de le présenter comme une activité externe.
+              ownRunIds.current.add(frame.runId);
+              touchRun(frame.runId, { own: true });
+            }
             break;
           case "send-error":
             setMessages((prev) =>
@@ -486,6 +557,7 @@ export function useChat(token: string | null) {
         setActiveRunId(null);
         setAbortPending(false);
         setDeliveryRoute(null);
+        setActivity([]);
         failOrphanSends();
         if (ev.code === 1008) {
           // Fermeture 1008 : token refusé ou auth expirée. C'est un état
@@ -517,7 +589,7 @@ export function useChat(token: string | null) {
       wsRef.current?.close();
       wsRef.current = null;
     };
-  }, [token, handleChatEvent, handleAgentEvent, handleSessionMessage]);
+  }, [token, handleChatEvent, handleAgentEvent, handleSessionMessage, touchRun]);
 
   const send = useCallback(
     (text: string) => {
@@ -596,6 +668,7 @@ export function useChat(token: string | null) {
     deliveryRoute,
     rejectedToken,
     activeRunId,
+    activity,
     abortPending,
     abortError,
     send,
