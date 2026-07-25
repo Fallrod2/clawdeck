@@ -8,7 +8,7 @@ leur périmètre — `CLAUDE.md` (architecture), `docs/UI_UX.md` (interface),
 `TODO.md` (travail à venir), `docs/EN-ATTENTE.md` (écarté volontairement).
 Ce fichier les relie et porte le savoir acquis à la dure.
 
-Dernière mise à jour : 2026-07-25.
+Dernière mise à jour : 2026-07-25 (soirée — les trois phases sont livrées).
 
 ---
 
@@ -75,6 +75,12 @@ délai de grâce de 5 s, et non par header — d'où l'exception dans le middlew
 | `web/src/hooks/useChat.ts` | traduction du flux gateway en modèle d'affichage |
 | `web/src/lib/timeline.ts` | regroupement des messages, séparateurs de jour |
 | `web/src/lib/activity.ts` | logique du bandeau d'activité |
+| `web/src/lib/historyMerge.ts` | fusion de l'historique après reconnexion |
+| `web/src/lib/chatSearch.ts` | recherche locale, insensible aux accents |
+| `src/security.ts` | en-têtes, garde bearer, sonde de vie — routes publiques en un seul endroit |
+| `src/notify.ts` | notifications : validation, diffusion, débit, idempotence, relais ntfy |
+| `src/network-diagnosis.ts` | conclusion réseau (local vs amont), pure et testée |
+| `src/log.ts` | journal structuré, masquage mécanique des secrets |
 
 ---
 
@@ -126,6 +132,30 @@ Voir §5 pour les décisions d'interface. Fonctionnellement :
   ou « Session interne ».
 - Regroupement des messages, séparateurs de jour, recherche locale, copie,
   brouillon persisté, compteur de caractères, amorces opérationnelles.
+
+### Notifications (phase 3)
+
+`POST /api/notify` accepte un payload versionné, borné, protégé par le bearer
+token, avec limitation de débit (20/min, compteur global — un seul opérateur)
+et clé d'idempotence à 60 s. Diffusion immédiate en SSE sur
+`/api/notifications` et relais optionnel vers ntfy.
+
+Trois décisions structurantes :
+
+- **Aucun historique**, ni serveur ni navigateur. Un client qui arrive ne
+  rattrape rien, et un test verrouille ce comportement. Le dashboard n'est pas
+  une boîte de réception ; prétendre le contraire obligerait à stocker ce que
+  l'architecture refuse de stocker.
+- **`207` quand la diffusion locale réussit mais que ntfy échoue.** Un `200`
+  masquerait la perte, un `5xx` nierait la diffusion réussie.
+- **Une configuration ntfy à moitié remplie fait échouer le démarrage.** Elle
+  produirait sinon un relais qui échoue à chaque notification sans que
+  personne ne sache pourquoi.
+
+Côté interface, une erreur ne disparaît jamais seule (un avertissement raté
+n'a pas rempli son office) ; les informations s'effacent, sinon la pile
+deviendrait l'historique qu'on refuse. `role="alert"` est réservé aux erreurs
+— il interrompt la lecture d'écran, en abuser le rend inaudible.
 
 ### Logs
 
@@ -250,6 +280,31 @@ Flux existants : `tool`, `approval`, `lifecycle`, `error`, `thinking`,
 `command_output`, `stdout`, `stderr`, `patch`, `plan`… Les événements
 `isHeartbeat` prouvent la liaison, **pas** une activité de l'agent.
 
+### `Buffer.from(x, "base64")` ne lève jamais
+
+Il ignore silencieusement tout caractère hors alphabet et rend des octets
+faux. Un `try/catch` autour du décodage est une branche morte : le
+téléversement écrivait un fichier **corrompu** en répondant 200. La forme doit
+être validée AVANT de décoder (`isValidBase64`, `src/validate.ts`).
+
+### Un module qui valide à l'import rend toute la suite fragile
+
+`src/env.ts` évaluait la configuration au chargement : importer le module
+échouait sans `.env`. Conséquence non évidente — `bun test src/env.test.ts`
+était impossible à lancer seul, alors que ce fichier ne teste que des
+fonctions pures, et la suite complète ne passait que parce qu'un AUTRE fichier
+amorçait `process.env` en premier. La CI dépendait donc silencieusement d'un
+ordre d'exécution. La configuration est désormais résolue au premier accès
+(`getEnv()`).
+
+### Le cache de la passerelle par défaut doit expirer de deux façons
+
+Un TTL seul rate la bascule bruyante (Wi-Fi → 4G, adresse injoignable
+immédiatement) ; un compteur d'échecs seul rate la bascule silencieuse
+(l'ancienne adresse reste pingable mais n'est plus la route par défaut). Les
+deux sont nécessaires. Et un ping réussi ne doit **jamais** prolonger le
+TTL — c'est précisément le cas que le TTL existe pour rattraper.
+
 ### Provenance d'un message
 
 OpenClaw pose `sourceChannel` (+ `senderId`/`senderName`/`senderE164`) sur ce
@@ -291,14 +346,34 @@ sur un processus lancé à la main, qui ne survivra pas à un redémarrage.
 
 ### Vérification
 
+La machine n'a **pas de session graphique** : sans ces outils, aucune
+évolution d'interface ne peut être jugée autrement qu'en la supposant. Tous
+signalent les erreurs console et les débordements horizontaux, invisibles sur
+une capture.
+
 ```bash
-bun run check             # typecheck + lint + test + build
-bun scripts/screenshot.ts # captures réelles en 390/768/1440 px
+bun run check              # typecheck + lint + 274 tests + build
+bun run shots              # l'application réelle, en 390 / 768 / 1440 px
+bun scripts/demo-shots.ts  # le banc d'états (web/demo.html)
+bun scripts/smoke.ts       # bout en bout sur une instance jetable
+bun scripts/backup.ts      # sauvegarde vérifiée
 ```
 
-`scripts/screenshot.ts` est le seul moyen de juger le rendu : la machine n'a
-pas de session graphique. Il signale aussi les erreurs console et les
-débordements horizontaux, invisibles sur une capture.
+**Le banc d'états** (`web/demo.html` + `web/src/demo.tsx`) rend, à partir de
+données fixes, tout ce qu'on ne peut pas provoquer sans solliciter l'agent
+réel — bloc de code, appel d'outil en erreur, raisonnement, streaming, échec
+d'envoi, livraison sortante. Il ne fuite jamais en production : Vite ne
+construit qu'`index.html`.
+
+**Le test de fumée** démarre une instance jetable (port libre, base et
+identité temporaires, gateway volontairement injoignable) — il exerce donc au
+passage le chemin « dépendance indisponible », et ne touche jamais
+l'instance de production ni l'OpenClaw réel.
+
+Ces outils ne sont pas du confort : ils ont révélé, dès leur première
+exécution, une navigation mobile qui se chevauchait à 390 px, un composeur
+repoussé sous la ligne de flottaison, un groupe de 119 px pour le mot « hey »,
+et une cause d'échec affichée deux fois.
 
 ---
 
