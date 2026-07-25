@@ -4,13 +4,22 @@ Dashboard temps réel self-hosted pour superviser une instance OpenClaw locale
 (agent Codex primary, fallback Ollama, canal WhatsApp) depuis un Mac mini
 headless, accessible uniquement via Tailscale.
 
-Voir `CLAUDE.md` pour le contexte complet et les règles d'architecture.
-Les règles visuelles et d'interaction sont dans `docs/UI_UX.md`.
+**`docs/PROJET.md` est la référence complète** : fonctionnalités, décisions
+d'interface et leur raison, exploitation, et surtout les pièges déjà payés
+(scopes gateway, route de livraison WhatsApp, API absentes hors contexte
+sécurisé). À lire avant toute évolution.
+
+Règles d'architecture : `CLAUDE.md`. Règles visuelles et d'interaction :
+`docs/UI_UX.md`. Travail à venir : `TODO.md`. Pistes écartées et leurs
+conditions de déblocage : `docs/EN-ATTENTE.md`.
 
 ## Stack
 
 - **Backend** : Bun + Hono (TypeScript) — sert aussi le front buildé
-- **Front** : React + Vite + Tailwind (thème sombre), dans `/web`
+- **Front** : React + Vite + Tailwind (thème sombre), dans `/web`.
+  Superfamille IBM Plex auto-hébergée (latin, ~89 Ko) : aucune requête vers un
+  CDN, l'interface fonctionne hors ligne — voir `docs/UI_UX.md` §3 pour la
+  justification structurelle du choix.
 - **Temps réel** : SSE pour les statuts (`/api/status`), WebSocket relayé pour le chat (`/api/chat/ws`)
 - **Persistance** : SQLite (`bun:sqlite`) — historique des pings uniquement (le chat n'est jamais dupliqué, voir `chat.history` de la gateway)
 - **Réseau** : bind sur 127.0.0.1 ou une IP Tailscale, jamais `0.0.0.0`
@@ -25,8 +34,14 @@ Phase 1 (health panel) et phase 2 (chat) en place :
   mémoire et jamais persisté par clawdeck.
 - Chat riche : le backend maintient une connexion WS authentifiée par
   identité d'appareil vers la gateway OpenClaw (`src/gateway/`) et la relaie
-  au front (markdown, tool calls visibles, streaming). Voir
+  au front. Markdown, appels d'outils repliables avec sortie de commande live,
+  raisonnement de l'agent, bandeau d'activité (y compris pour un run déclenché
+  hors du dashboard), route de livraison affichée dans le composeur, recherche
+  locale, regroupement des messages et séparateurs de jour. Voir
   `docs/gateway/protocol.md` du paquet `openclaw` pour le protocole complet.
+- Durcissement : en-têtes de sécurité sur toutes les réponses (CSP vérifiée
+  sans violation dans Chromium et WebKit), `/api/healthz` non authentifié et
+  sans détail, journaux structurés qui masquent mécaniquement tout secret.
 
 ## Prérequis
 
@@ -73,11 +88,30 @@ réseau (Tailscale), utiliser le build de prod (voir ci-dessous).
 ## Vérifications
 
 ```bash
-bun run test       # tests unitaires Bun
+bun run test       # tests unitaires Bun (backend + logique pure du front)
 bun run typecheck  # backend + frontend
 bun run lint       # frontend
 bun run check      # tous les checks puis le build de production
 ```
+
+### Vérification visuelle
+
+La machine n'a pas de session graphique : l'interface ne peut être jugée
+qu'en la rendant dans un navigateur headless. Deux outils complémentaires,
+tous deux signalant les erreurs console et les débordements horizontaux.
+
+```bash
+bun run shots               # l'application réelle, en 390 / 768 / 1440 px
+bun scripts/demo-shots.ts   # le banc d'états (web/demo.html)
+```
+
+Le banc rend les états qu'on ne peut pas provoquer sans solliciter l'agent —
+bloc de code, appel d'outil en erreur, raisonnement, streaming, échec
+d'envoi. Il n'est jamais embarqué en production : Vite ne construit
+qu'`index.html`.
+
+Les icônes d'application se régénèrent avec `bun scripts/make-icons.ts`
+(uniquement si l'identité visuelle change ; les PNG sont commités).
 
 ## Build & production
 
