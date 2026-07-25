@@ -29,11 +29,13 @@ import {
   MAX_CHAT_TEXT_LENGTH,
   type ChatMessage,
   type DeliveryRoute,
+  type MessageMedia,
   type ToolCall,
 } from "../lib/chatTypes";
 import type { ChatController } from "../hooks/useChat";
 import { buildTimeline, formatDayLabel, type MessageGroup } from "../lib/timeline";
 import { ChatSearch, type ChatSearchHighlight } from "./ChatSearch";
+import { getToken } from "../lib/token";
 
 const REMARK_PLUGINS = [remarkGfm];
 
@@ -333,6 +335,81 @@ const PROSE_CLASSES =
   "prose-code:text-[0.85em] prose-code:before:content-none prose-code:after:content-none " +
   "prose-table:text-sm prose-th:font-semibold";
 
+// Média reçu (photo, vocal WhatsApp). L'URL passe par /api/media, protégée
+// par le bearer token : ni <img src> ni <audio src> ne peuvent poser d'en-tête,
+// on récupère donc l'octet via fetch puis on expose un blob local. Le blob est
+// révoqué au démontage, sinon chaque média fuiterait pour la durée de la page.
+function MediaAttachment({ media }: { media: MessageMedia }) {
+  const [url, setUrl] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    let revoked: string | null = null;
+    let cancelled = false;
+    const token = getToken();
+    if (!token) return;
+
+    const query = new URLSearchParams({ path: media.path, type: media.mime });
+    fetch(`/api/media?${query}`, { headers: { Authorization: `Bearer ${token}` } })
+      .then((res) => (res.ok ? res.blob() : Promise.reject(new Error(String(res.status)))))
+      .then((blob) => {
+        if (cancelled) return;
+        revoked = URL.createObjectURL(blob);
+        setUrl(revoked);
+      })
+      .catch(() => {
+        if (!cancelled) setFailed(true);
+      });
+
+    return () => {
+      cancelled = true;
+      if (revoked) URL.revokeObjectURL(revoked);
+    };
+  }, [media.path, media.mime]);
+
+  const kind = media.mime.split("/")[0];
+  const name = media.path.split("/").pop() ?? "média";
+
+  if (failed) {
+    return (
+      <p className="mt-2 text-2xs text-[var(--text-muted)]">
+        Média indisponible — il a pu être nettoyé du workspace de l'agent.
+      </p>
+    );
+  }
+  if (!url) {
+    return <p className="mt-2 text-2xs text-[var(--text-muted)]">Chargement du média…</p>;
+  }
+  if (kind === "image") {
+    return (
+      <a href={url} target="_blank" rel="noreferrer" className="mt-2 block">
+        <img
+          src={url}
+          alt={`Image reçue : ${name}`}
+          className="max-h-72 w-auto rounded-lg border border-[var(--border-subtle)]"
+        />
+      </a>
+    );
+  }
+  if (kind === "audio") {
+    // Contrôles natifs : un lecteur maison n'apporterait rien et perdrait
+    // l'accessibilité clavier que le navigateur fournit déjà.
+    return <audio src={url} controls preload="metadata" className="mt-2 w-full max-w-sm" />;
+  }
+  if (kind === "video") {
+    return <video src={url} controls preload="metadata" className="mt-2 max-h-72 w-full rounded-lg" />;
+  }
+  return (
+    <a
+      href={url}
+      download={name}
+      className="mt-2 inline-block text-2xs text-emerald-300 underline underline-offset-2"
+    >
+      Télécharger {name}
+    </a>
+  );
+}
+
 function MessageBody({ message }: { message: ChatMessage }) {
   // Réponse en cours d'écriture ET déjà du texte : le curseur clignotant
   // prend le relais des trois points, qui ne couvrent que le texte vide.
@@ -524,6 +601,9 @@ function GroupBlock({
                   <ReasoningBlock text={message.reasoning} live={message.pending} />
                 )}
                 <MessageBody message={message} />
+                {message.media?.map((media) => (
+                  <MediaAttachment key={media.path} media={media} />
+                ))}
                 {message.toolCalls.map((tool) => (
                   <ToolCallCard key={tool.id} tool={tool} />
                 ))}

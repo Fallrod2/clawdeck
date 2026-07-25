@@ -69,6 +69,17 @@ test("la CSP autorise ce que le front charge vraiment", () => {
   expect(CSP_DIRECTIVES["default-src"]).toBe("'self'");
 });
 
+test("la CSP autorise les blob: des médias du chat", () => {
+  // /api/media exige le bearer token, or <img>/<audio> ne posent pas
+  // d'en-tête : le front récupère l'octet par fetch et expose un blob local.
+  // `media-src` DOIT être explicite — sans elle, la directive retombe sur
+  // default-src et les vocaux WhatsApp sont bloqués (constaté à l'exécution
+  // le 2026-07-25, une lecture du seul code laissait croire l'inverse).
+  expect(CSP_DIRECTIVES["img-src"]).toContain("blob:");
+  expect(CSP_DIRECTIVES["media-src"]).toContain("blob:");
+  expect(CSP_DIRECTIVES["media-src"]).toContain("'self'");
+});
+
 test("la CSP interdit le script inline, l'encadrement et la réécriture de base", () => {
   expect(CONTENT_SECURITY_POLICY).not.toContain("unsafe-inline");
   expect(CONTENT_SECURITY_POLICY).not.toContain("unsafe-eval");

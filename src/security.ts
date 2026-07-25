@@ -31,7 +31,16 @@ export const CSP_DIRECTIVES: Record<string, string> = {
   "font-src": "'self'",
   // data: est exigé par l'aperçu d'image de l'onglet Fichiers, que le front
   // construit en `data:<mime>;base64,…` à partir de la réponse gateway.
-  "img-src": "'self' data:",
+  // blob: est exigé par les médias du chat : /api/media est protégée par le
+  // bearer token, or ni <img src> ni <audio src> ne peuvent poser d'en-tête —
+  // le front récupère donc l'octet par fetch et expose un blob local. Un blob:
+  // ne peut être créé que par notre propre script, à partir de ce que notre
+  // propre origine a servi.
+  "img-src": "'self' data: blob:",
+  // Même raison pour les vocaux et vidéos reçus. Sans directive explicite,
+  // media- retombe sur default-src et les blob: sont refusés — constaté à
+  // l'exécution le 2026-07-25, la prédiction inverse était fausse.
+  "media-src": "'self' blob:",
   // Flux SSE (/api/status, /api/logs, ouverts en fetch pour porter le header
   // Authorization) et WebSocket du chat (/api/chat/ws). Depuis une page http://,
   // 'self' couvre le ws:// de même origine (CSP niveau 3).

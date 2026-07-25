@@ -21,6 +21,7 @@ import { StatusCollector } from "./status-collector";
 import { LogTailer } from "./log-tailer";
 import { normalizeLogTail, type DashboardLogEntry } from "./logs";
 import { saveWorkspaceFile, WorkspaceWriteError } from "./workspace";
+import { MediaReadError, resolveMediaPath, safeMediaType } from "./media";
 import {
   NotificationHub,
   NotifyService,
@@ -551,6 +552,47 @@ app.get("/api/workspace", async (c) => {
     });
   } catch (err) {
     return c.json({ error: (err as Error).message }, 502);
+  }
+});
+
+// Média reçu par l'agent (photo, vocal WhatsApp). Le chemin ABSOLU vient du
+// transcript et transite par le navigateur : il n'est jamais digne de
+// confiance, d'où la résolution confinée de src/media.ts. Sans cette route,
+// une photo envoyée depuis le téléphone n'apparaît que comme « média envoyé ».
+app.get("/api/media", async (c) => {
+  const requested = c.req.query("path");
+  if (!requested) return c.json({ error: "paramètre path requis" }, 400);
+  if (!gateway.isConnected) {
+    return c.json({ error: "gateway déconnectée — racine du workspace inconnue" }, 503);
+  }
+  const agent = await gateway.getDefaultAgent().catch(() => null);
+  if (!agent?.workspace) {
+    return c.json({ error: "racine du workspace inconnue" }, 503);
+  }
+
+  try {
+    const resolved = resolveMediaPath(agent.workspace, requested);
+    const file = Bun.file(resolved);
+    return new Response(file, {
+      headers: {
+        "content-type": safeMediaType(c.req.query("type")),
+        // Contenu immuable (un média reçu ne change plus) mais privé : il ne
+        // doit pas être mis en cache par un intermédiaire partagé.
+        "cache-control": "private, max-age=3600",
+        // Défense en profondeur : même avec un type neutralisé, on refuse
+        // explicitement que le navigateur devine autre chose.
+        "x-content-type-options": "nosniff",
+      },
+    });
+  } catch (error) {
+    if (error instanceof MediaReadError) {
+      const status = error.code === "too-large" ? 413 : error.code === "not-found" ? 404 : 400;
+      return c.json({ error: error.message, code: error.code }, status);
+    }
+    logError("media", "lecture de média impossible", {
+      raison: error instanceof Error ? error.message : String(error),
+    });
+    return c.json({ error: "lecture du média impossible" }, 500);
   }
 });
 

@@ -11,6 +11,7 @@ import {
   type ChatMessage,
   type DeliveryRoute,
   type GatewayConnectionState,
+  type MessageMedia,
   type MessageModel,
   type MessageOrigin,
   type RunActivity,
@@ -98,6 +99,26 @@ function parseModel(m: Record<string, unknown>): MessageModel | undefined {
   return { provider, name };
 }
 
+// Médias joints à un message entrant. OpenClaw pose soit un chemin unique
+// (`MediaPath`), soit un tableau (`MediaPaths`) — les deux coexistent quand il
+// n'y en a qu'un, d'où le dédoublonnage. Les types sont appariés par index ;
+// un type manquant n'empêche pas d'afficher le média, le backend neutralisera.
+function parseMedia(m: Record<string, unknown>): MessageMedia[] | undefined {
+  const paths = Array.isArray(m.MediaPaths)
+    ? m.MediaPaths.filter((p): p is string => typeof p === "string" && p.length > 0)
+    : [];
+  const single = asString(m.MediaPath);
+  if (single && !paths.includes(single)) paths.unshift(single);
+  if (paths.length === 0) return undefined;
+
+  const types = Array.isArray(m.MediaTypes) ? m.MediaTypes : [];
+  const fallbackType = asString(m.MediaType) ?? "";
+  return paths.map((path, index) => ({
+    path,
+    mime: (typeof types[index] === "string" ? types[index] : fallbackType) || "",
+  }));
+}
+
 function parseHistory(raw: unknown): ChatMessage[] {
   const messages = asRecord(raw)?.messages;
   if (!Array.isArray(messages)) return [];
@@ -117,7 +138,7 @@ function parseHistory(raw: unknown): ChatMessage[] {
       timestamp: typeof m.timestamp === "number" ? m.timestamp : Date.now(),
       pending: false,
       toolCalls: [],
-      ...(role === "user" ? { origin: parseOrigin(m) } : { model: parseModel(m) }),
+      ...(role === "user" ? { origin: parseOrigin(m), media: parseMedia(m) } : { model: parseModel(m) }),
     });
   });
   return out;
@@ -462,7 +483,7 @@ export function useChat(token: string | null) {
             // Message venu d'ailleurs (le téléphone) : sa provenance est
             // affichée, sinon rien ne distingue ce que J'AI écrit ici de ce
             // que j'ai écrit sur WhatsApp.
-            ...(role === "user" ? { origin: parseOrigin(m) } : { model: parseModel(m) }),
+            ...(role === "user" ? { origin: parseOrigin(m), media: parseMedia(m) } : { model: parseModel(m) }),
           },
         ]);
       });

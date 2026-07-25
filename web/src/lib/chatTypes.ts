@@ -56,6 +56,7 @@ export interface ChatMessage {
   clientMessageId?: string;
   sendState?: SendState;
   origin?: MessageOrigin;
+  media?: MessageMedia[];
   // Flux `thinking` : raisonnement de l'agent, texte cumulatif. Replié par
   // défaut — c'est un éclairage sur le POURQUOI d'une action, pas la réponse.
   reasoning?: string;
@@ -68,6 +69,15 @@ export interface ChatMessage {
 export interface MessageModel {
   provider: string;
   name: string;
+}
+
+// Média joint à un message entrant (photo, vocal WhatsApp). `path` est le
+// chemin ABSOLU tel qu'OpenClaw l'a enregistré ; il n'est jamais lu
+// directement par le navigateur mais transmis à /api/media, qui le résout de
+// façon confinée sous le workspace de l'agent.
+export interface MessageMedia {
+  path: string;
+  mime: string;
 }
 
 // Activité d'un run de l'agent, reconstruite depuis les événements `agent`
