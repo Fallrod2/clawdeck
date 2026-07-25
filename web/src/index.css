@@ -71,6 +71,56 @@ a {
   scrollbar-width: thin;
 }
 
+/* Animations du chat. Chacune signale un changement d'état RÉEL (arrivée d'un
+   message, réponse en cours d'écriture, apparition d'une barre d'action) —
+   aucune n'est décorative, conformément à UI_UX.md §1. Durées courtes et
+   amplitudes faibles pour ne pas concurrencer la lecture ; la règle
+   prefers-reduced-motion en fin de fichier les neutralise toutes. */
+
+@keyframes clawdeck-enter {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Arrivée d'un élément dans le flux : message, carte d'outil, barre d'action. */
+.clawdeck-enter {
+  animation: clawdeck-enter 180ms ease-out;
+}
+
+@keyframes clawdeck-caret {
+  0%,
+  45% {
+    opacity: 1;
+  }
+  55%,
+  100% {
+    opacity: 0.12;
+  }
+}
+
+/* Curseur d'écriture accroché à la fin du dernier bloc rendu : tant qu'il
+   clignote, la réponse n'est pas terminée. Sans lui, un message déjà long en
+   cours de streaming est indiscernable d'un message fini (les trois points
+   existants ne couvrent que le cas « texte encore vide »). Sous
+   prefers-reduced-motion il reste affiché en statique, toujours informatif. */
+.clawdeck-streaming > :last-child::after {
+  content: "";
+  display: inline-block;
+  width: 0.42em;
+  height: 1em;
+  margin-left: 0.15em;
+  vertical-align: -0.15em;
+  border-radius: 1px;
+  background: var(--accent);
+  animation: clawdeck-caret 1s steps(1, end) infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

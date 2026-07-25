@@ -35,7 +35,7 @@ function DeliveryBadge({ route }: { route: DeliveryRoute | null }) {
   const external = route !== null;
   return (
     <p
-      className={`mb-2 flex items-center gap-1.5 px-1 text-[11px] ${
+      className={`clawdeck-enter mb-2 flex items-center gap-1.5 px-1 text-[11px] ${
         external ? "text-emerald-200/85" : "text-[var(--text-muted)]"
       }`}
       aria-live="polite"
@@ -67,7 +67,7 @@ function ToolCallCard({ tool }: { tool: ToolCall }) {
   const result = formatPayload(tool.result);
 
   return (
-    <details className="group mt-3 overflow-hidden rounded-lg border border-white/8 bg-black/20 text-xs">
+    <details className="clawdeck-enter group mt-3 overflow-hidden rounded-lg border border-white/8 bg-black/20 text-xs">
       <summary className="flex min-h-10 cursor-pointer list-none items-center gap-2 px-3 text-[var(--text-secondary)] marker:content-none">
         <span
           className={`h-1.5 w-1.5 shrink-0 rounded-full ${
@@ -113,10 +113,17 @@ function MessageBubble({
     hour: "2-digit",
     minute: "2-digit",
   });
+  // L'historique initial (ids `history-*`) n'est pas animé : l'animation
+  // d'arrivée signale un message NOUVEAU, pas le remplissage de la vue au
+  // chargement — sinon cinquante bulles s'animeraient d'un coup.
+  const isNew = !message.id.startsWith("history-");
+  // Réponse en cours d'écriture ET déjà du texte : le curseur clignotant
+  // prend le relais des trois points, qui ne couvrent que le texte vide.
+  const streaming = message.pending && Boolean(message.text);
 
   return (
     <article
-      className={`flex ${isUser ? "justify-end" : "justify-start"}`}
+      className={`flex ${isNew ? "clawdeck-enter" : ""} ${isUser ? "justify-end" : "justify-start"}`}
       aria-label={`Message ${isUser ? "utilisateur" : "assistant"} à ${time}${
         message.origin ? `, reçu via ${channelLabel(message.origin.channel)}` : ""
       }`}
@@ -130,7 +137,11 @@ function MessageBubble({
           }`}
         >
           {message.text ? (
-            <div className="prose prose-invert prose-sm max-w-none break-words prose-headings:mb-2 prose-headings:mt-4 prose-p:my-1.5 prose-p:leading-6 prose-a:text-emerald-300 prose-pre:my-3 prose-pre:overflow-x-auto prose-pre:rounded-lg prose-pre:border prose-pre:border-white/8 prose-pre:bg-black/25 prose-code:text-[0.82em]">
+            <div
+              className={`prose prose-invert prose-sm max-w-none break-words prose-headings:mb-2 prose-headings:mt-4 prose-p:my-1.5 prose-p:leading-6 prose-a:text-emerald-300 prose-pre:my-3 prose-pre:overflow-x-auto prose-pre:rounded-lg prose-pre:border prose-pre:border-white/8 prose-pre:bg-black/25 prose-code:text-[0.82em] ${
+                streaming ? "clawdeck-streaming" : ""
+              }`}
+            >
               <Markdown remarkPlugins={REMARK_PLUGINS}>{message.text}</Markdown>
             </div>
           ) : message.pending ? (
@@ -149,7 +160,7 @@ function MessageBubble({
               type="button"
               onClick={onRetry}
               disabled={retryDisabled}
-              className="mt-2 min-h-8 rounded-lg border border-red-300/25 bg-red-300/10 px-3 text-xs font-medium text-red-200 transition-colors hover:bg-red-300/15 disabled:cursor-not-allowed disabled:opacity-45"
+              className="mt-2 min-h-8 rounded-lg border border-red-300/25 bg-red-300/10 px-3 text-xs font-medium text-red-200 transition hover:bg-red-300/15 active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-45"
             >
               Réessayer
             </button>
@@ -165,7 +176,13 @@ function MessageBubble({
               distingue ce que j'ai écrit ici de ce que j'ai écrit au téléphone. */}
           {message.origin && ` · via ${channelLabel(message.origin.channel)}`}
           {message.pending ? " · en cours" : ""}
-          {message.sendState === "sending" ? " · envoi en cours" : ""}
+          {message.sendState === "sending" && (
+            <span>
+              {" · "}
+              <span className="inline-block h-1 w-1 animate-pulse rounded-full bg-current align-middle" aria-hidden />
+              {" envoi en cours"}
+            </span>
+          )}
           {message.sendState === "failed" && <span className="text-red-300"> · échec de l'envoi</span>}
         </p>
       </div>
@@ -262,7 +279,7 @@ export function ChatPanel({ chat, active }: { chat: ChatController; active: bool
 
       <div className="border-t border-white/8 bg-black/10 p-3 sm:p-4">
         {activeRunId && (
-          <div className="mb-2 flex min-h-10 items-center justify-between gap-3 rounded-lg border border-amber-300/15 bg-amber-300/6 px-3 py-1.5">
+          <div className="clawdeck-enter mb-2 flex min-h-10 items-center justify-between gap-3 rounded-lg border border-amber-300/15 bg-amber-300/6 px-3 py-1.5">
             <span className="inline-flex items-center gap-2 text-xs text-[var(--text-secondary)]">
               <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-400" aria-hidden />
               Réponse en cours
@@ -271,7 +288,7 @@ export function ChatPanel({ chat, active }: { chat: ChatController; active: bool
               type="button"
               onClick={abort}
               disabled={abortPending || wsState !== "open"}
-              className="min-h-8 rounded-md border border-white/12 bg-black/20 px-3 text-xs text-[var(--text-primary)] transition-colors hover:bg-white/8 disabled:cursor-not-allowed disabled:opacity-45"
+              className="min-h-8 rounded-md border border-white/12 bg-black/20 px-3 text-xs text-[var(--text-primary)] transition hover:bg-white/8 active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-45"
             >
               {abortPending ? "Interruption demandée…" : "Interrompre"}
             </button>
@@ -284,7 +301,11 @@ export function ChatPanel({ chat, active }: { chat: ChatController; active: bool
         </p>
         {/* Hors connexion, aucune route ne peut être affirmée : la pastille
             d'état de l'en-tête porte déjà l'information. */}
-        {connected && <DeliveryBadge route={deliveryRoute} />}
+        {/* La clé remonte le badge quand la route change : son animation
+            d'entrée rejoue, seul signal visible d'une bascule du canal. */}
+        {connected && (
+          <DeliveryBadge key={deliveryRoute ? `${deliveryRoute.channel}:${deliveryRoute.to}` : "interne"} route={deliveryRoute} />
+        )}
         <form
           className="rounded-xl border border-white/10 bg-black/20 p-2 transition-colors focus-within:border-emerald-300/25"
           onSubmit={(event) => {
@@ -319,7 +340,7 @@ export function ChatPanel({ chat, active }: { chat: ChatController; active: bool
             <button
               type="submit"
               disabled={!connected || !draft.trim()}
-              className="ml-auto min-h-9 rounded-lg bg-emerald-300 px-4 text-xs font-semibold text-[var(--text-on-accent)] transition-colors hover:bg-emerald-200 disabled:cursor-not-allowed disabled:opacity-35"
+              className="ml-auto min-h-9 rounded-lg bg-emerald-300 px-4 text-xs font-semibold text-[var(--text-on-accent)] transition hover:bg-emerald-200 active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-35"
             >
               Envoyer
             </button>
