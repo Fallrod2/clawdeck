@@ -69,12 +69,10 @@ supervision, chat riche, notifications.
 Nées de ce qu'on a appris en construisant, pas d'un plan initial. À faire
 seulement si l'usage réel les réclame.
 
-- [ ] **Cibles configurables du moniteur réseau.** Les trois sondes sont
-  codées en dur ; les déclarer dans `.env` permettrait de surveiller ce qui
-  compte vraiment à un moment donné, sans toucher au code.
-- [ ] **Export de la conversation** (copie intégrale ou fichier Markdown).
-  La copie par groupe existe ; l'export complet servirait à archiver un
-  échange qui a compté, hors du plafond de 500 messages en mémoire.
+- [ ] **Cibles configurables du moniteur réseau — partiellement fait.** La
+  sonde distante se repointe désormais par `REMOTE_HOST`. Rendre les trois
+  entièrement déclaratives demanderait de propager des clés dynamiques dans
+  la base, le graphe et les cartes : à ne faire que si le besoin apparaît.
 - [ ] **Aperçu des médias dans l'onglet Fichiers.** `/api/media` sait déjà
   servir un fichier du workspace de façon confinée ; l'onglet Fichiers
   n'affiche que du texte et des images encodées par la gateway.
