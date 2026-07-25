@@ -204,7 +204,7 @@ export function AnomalyStrip({
           type="button"
           onClick={() => setOpen((value) => !value)}
           aria-expanded={open}
-          className="min-h-9 shrink-0 rounded-lg border border-white/8 bg-black/20 px-2.5 text-2xs text-[var(--text-secondary)] transition-colors hover:bg-white/6 sm:min-h-8"
+          className="min-h-10 shrink-0 rounded-lg border border-white/8 bg-black/20 px-2.5 text-2xs text-[var(--text-secondary)] transition-colors hover:bg-white/6 sm:min-h-8"
         >
           {open ? "Masquer" : "Détail"}
         </button>

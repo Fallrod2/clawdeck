@@ -5,6 +5,7 @@ import { TokenGate } from "./components/TokenGate";
 import { StatusCard, type Tone } from "./components/StatusCard";
 import { LatencyChart } from "./components/LatencyChart";
 import { AnomalyStrip } from "./components/AnomalyStrip";
+import { UsageCard } from "./components/UsageCard";
 import { ChatPanel } from "./components/ChatPanel";
 import { LogsPanel } from "./components/LogsPanel";
 import { FilesPanel } from "./components/FilesPanel";
@@ -59,9 +60,6 @@ const CALLOUT_TONES: Record<Tone, { shell: string; badge: string; symbol: string
   },
 };
 
-// Miroir local du champ `network` du payload SSE — source de vérité :
-// src/network-diagnosis.ts. Sa place définitive est lib/types.ts, auprès des
-// autres miroirs du payload backend.
 function toneForCheck(check: { ok: boolean } | null | undefined): Tone {
   if (!check) return "unknown";
   return check.ok ? "good" : "critical";
@@ -219,7 +217,7 @@ export default function App() {
         <div className="mx-auto flex min-h-16 max-w-6xl items-center gap-4 px-4 sm:px-6">
           <button
             type="button"
-            className="flex shrink-0 items-center gap-3 rounded-md text-left"
+            className="flex min-h-10 shrink-0 items-center gap-3 rounded-md text-left"
             onClick={() => setTab("health")}
             aria-label="Retour à la vue d'ensemble"
           >
@@ -266,7 +264,7 @@ export default function App() {
             </div>
             <button
               type="button"
-              className="min-h-9 rounded-lg px-2.5 text-xs text-[var(--text-muted)] transition-colors hover:bg-white/5 hover:text-[var(--text-primary)]"
+              className="min-h-10 rounded-lg px-2.5 text-xs text-[var(--text-muted)] sm:min-h-9 transition-colors hover:bg-white/5 hover:text-[var(--text-primary)]"
               onClick={() => {
                 clearToken();
                 setTokenState(null);
@@ -423,6 +421,12 @@ export default function App() {
               />
             </section>
 
+            {/* Consommation avant le graphe de latence : « vais-je être bloqué
+                aujourd'hui ? » précède « comment se porte le réseau ». */}
+            <div className="mt-4">
+              <UsageCard usage={openclaw?.usage} now={now} />
+            </div>
+
             <section className="mt-4 overflow-hidden rounded-xl border border-white/8 bg-[var(--surface-panel)]">
               <div className="flex flex-col gap-3 border-b border-white/7 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-5">
                 <div>
@@ -437,7 +441,7 @@ export default function App() {
                       onClick={() => setRangeHours(range.hours)}
                       aria-label={range.label}
                       aria-pressed={rangeHours === range.hours}
-                      className={`min-h-8 rounded-md px-3 text-xs transition-colors ${
+                      className={`min-h-10 rounded-md px-3 text-xs transition-colors sm:min-h-8 ${
                         rangeHours === range.hours
                           ? "bg-white/10 text-white shadow-sm"
                           : "text-[var(--text-muted)] hover:text-[var(--text-secondary)]"

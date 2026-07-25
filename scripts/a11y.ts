@@ -143,7 +143,11 @@ const AUDIT = () => {
     const description = `${el.tagName.toLowerCase()}${el.className ? `.${String(el.className).split(" ")[0]}` : ""}`;
     if (!nom) soucis.push({ regle: "nom-accessible", detail: `${description} sans nom` });
 
-    const r = el.getBoundingClientRect();
+    // Une case à cocher entourée d un <label> a pour cible RÉELLE tout le
+    // label : mesurer le seul input signalerait 13×13 px alors que la zone
+    // cliquable fait toute la ligne.
+    const enveloppe = el.closest("label");
+    const r = (enveloppe ?? el).getBoundingClientRect();
     // Les liens en ligne dans un texte ne sont pas des cibles isolées.
     const enLigne = el.tagName === "A" && getComputedStyle(el).display.includes("inline");
     // Le seuil de 40 px ne vaut que pour un pointeur grossier (UI_UX.md §7) :

@@ -189,7 +189,7 @@ export function FilesPanel({ token, active }: { token: string | null; active: bo
         <button
           type="button"
           onClick={ws.refresh}
-          className="rounded-lg border border-white/8 px-2.5 py-1 text-xs text-[var(--text-secondary)] hover:bg-white/6 focus-visible:outline focus-visible:outline-emerald-300/60"
+          className="min-h-10 rounded-lg border border-white/8 px-2.5 py-1 text-xs text-[var(--text-secondary)] hover:bg-white/6 sm:min-h-8 focus-visible:outline focus-visible:outline-emerald-300/60"
         >
           Actualiser
         </button>
@@ -209,9 +209,9 @@ export function FilesPanel({ token, active }: { token: string | null; active: bo
               id="ws-upload-file"
               ref={fileInputRef}
               type="file"
-              className="text-xs text-[var(--text-secondary)] file:mr-3 file:rounded-lg file:border-0 file:bg-white/9 file:px-3 file:py-1.5 file:text-xs file:text-white hover:file:bg-white/14"
+              className="min-h-10 text-xs text-[var(--text-secondary)] file:mr-3 file:rounded-lg file:border-0 file:bg-white/9 file:px-3 file:py-1.5 file:text-xs file:text-white hover:file:bg-white/14"
             />
-            <label className="flex items-center gap-2 text-xs text-[var(--text-secondary)]">
+            <label className="flex min-h-10 items-center gap-2 text-xs sm:min-h-0 text-[var(--text-secondary)]">
               <input
                 type="checkbox"
                 checked={uploadOverwrite}
@@ -222,7 +222,7 @@ export function FilesPanel({ token, active }: { token: string | null; active: bo
             <button
               type="submit"
               disabled={uploadStatus.kind === "pending"}
-              className="w-fit rounded-lg bg-emerald-400/15 px-3 py-1.5 text-xs font-medium text-emerald-200 hover:bg-emerald-400/22 disabled:opacity-50 focus-visible:outline focus-visible:outline-emerald-300/60"
+              className="min-h-10 w-fit rounded-lg bg-emerald-400/15 px-3 py-1.5 text-xs font-medium text-emerald-200 sm:min-h-9 hover:bg-emerald-400/22 disabled:opacity-50 focus-visible:outline focus-visible:outline-emerald-300/60"
             >
               {uploadStatus.kind === "pending" ? "Envoi en cours…" : "Déposer"}
             </button>
@@ -257,7 +257,7 @@ export function FilesPanel({ token, active }: { token: string | null; active: bo
               className="rounded-lg border border-white/8 bg-black/20 px-2.5 py-1.5 font-mono text-xs text-white placeholder:text-[var(--text-muted)] focus-visible:outline focus-visible:outline-emerald-300/60"
               placeholder="Une note, des instructions, un contexte pour l'agent…"
             />
-            <label className="flex items-center gap-2 text-xs text-[var(--text-secondary)]">
+            <label className="flex min-h-10 items-center gap-2 text-xs sm:min-h-0 text-[var(--text-secondary)]">
               <input
                 type="checkbox"
                 checked={createOverwrite}
@@ -268,7 +268,7 @@ export function FilesPanel({ token, active }: { token: string | null; active: bo
             <button
               type="submit"
               disabled={createStatus.kind === "pending"}
-              className="w-fit rounded-lg bg-emerald-400/15 px-3 py-1.5 text-xs font-medium text-emerald-200 hover:bg-emerald-400/22 disabled:opacity-50 focus-visible:outline focus-visible:outline-emerald-300/60"
+              className="min-h-10 w-fit rounded-lg sm:min-h-9 bg-emerald-400/15 px-3 py-1.5 text-xs font-medium text-emerald-200 hover:bg-emerald-400/22 disabled:opacity-50 focus-visible:outline focus-visible:outline-emerald-300/60"
             >
               {createStatus.kind === "pending" ? "Envoi en cours…" : "Créer"}
             </button>

@@ -104,19 +104,19 @@ export function LogsPanel({ token, active }: { token: string | null; active: boo
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             placeholder="Filtrer…"
-            className="min-h-9 w-full rounded-lg border border-white/8 bg-black/15 px-3 text-xs outline-none placeholder:text-[var(--text-muted)] focus:border-emerald-300/30 sm:w-52"
+            className="min-h-10 sm:min-h-9 w-full rounded-lg border border-white/8 bg-black/15 px-3 text-xs outline-none placeholder:text-[var(--text-muted)] focus:border-emerald-300/30 sm:w-52"
           />
           <button
             type="button"
             onClick={() => setPaused((value) => !value)}
-            className="min-h-9 rounded-lg border border-white/8 px-3 text-xs text-[var(--text-secondary)] hover:bg-white/5"
+            className="min-h-10 sm:min-h-9 rounded-lg border border-white/8 px-3 text-xs text-[var(--text-secondary)] hover:bg-white/5"
           >
             {paused ? "Reprendre" : "Pause"}
           </button>
           <button
             type="button"
             onClick={clear}
-            className="min-h-9 rounded-lg px-3 text-xs text-[var(--text-muted)] hover:bg-white/5 hover:text-[var(--text-secondary)]"
+            className="min-h-10 sm:min-h-9 rounded-lg px-3 text-xs text-[var(--text-muted)] hover:bg-white/5 hover:text-[var(--text-secondary)]"
           >
             Effacer la vue
           </button>
@@ -131,7 +131,7 @@ export function LogsPanel({ token, active }: { token: string | null; active: boo
               type="button"
               aria-pressed={filter === item.id}
               onClick={() => setFilter(item.id)}
-              className={`min-h-8 rounded-md px-3 text-[11px] ${filter === item.id ? "bg-white/10 text-white" : "text-[var(--text-muted)]"}`}
+              className={`min-h-10 sm:min-h-8 rounded-md px-3 text-[11px] ${filter === item.id ? "bg-white/10 text-white" : "text-[var(--text-muted)]"}`}
             >
               {item.label}
             </button>

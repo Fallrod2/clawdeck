@@ -30,6 +30,8 @@ export interface OpenClawRuntimeStatus {
   configuredModel: string | null;
   usingFallback: boolean | null;
   modelAvailable: boolean | null;
+  // Optionnel : un backend plus ancien n'en émet pas.
+  usage?: OpenClawUsage;
   whatsapp: {
     configured: boolean | null;
     linked: boolean | null;
@@ -78,6 +80,63 @@ export interface AnomalyJournal {
   since: number;
   retentionMs: number;
   entries: AnomalyEntry[];
+}
+
+// Consommation lue chez OpenClaw (RPC usage.status / usage.cost). Miroir des
+// types de src/openclaw-usage.ts — source de vérité côté backend.
+//
+// `state` distingue cinq cas que l'affichage ne doit JAMAIS confondre :
+// « unsupported » = cette gateway n'annonce pas la méthode, il n'y a rien à
+// attendre ; « pending » = pas encore mesuré, les totaux valent zéro par
+// construction et ne doivent pas être montrés ; « empty » = mesuré, rien à
+// dire. Quota et coût ont un état INDÉPENDANT : le quota peut être en erreur
+// réseau pendant que le coût est prêt.
+export type UsageState = "ready" | "empty" | "pending" | "unsupported" | "error";
+
+export interface UsageWindow {
+  label: string;
+  usedPercent: number;
+  resetAt: number | null;
+}
+
+export interface UsageProvider {
+  id: string;
+  displayName: string;
+  plan: string | null;
+  windows: UsageWindow[];
+  /** Fenêtre la plus consommée : c'est ELLE qui décide du blocage. */
+  worstUsedPercent: number | null;
+  error: string | null;
+}
+
+export interface QuotaUsage {
+  state: UsageState;
+  /** Mesure produite par OpenClaw : peut avoir jusqu'à 60 s de retard sur
+   *  `timestamp`, l'âge s'affiche donc depuis CE champ. */
+  measuredAt: number | null;
+  providers: UsageProvider[];
+  error: string | null;
+}
+
+export interface CostUsage {
+  state: UsageState;
+  windowDays: number;
+  totalCost: number;
+  totalTokens: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  /** Entrées sans tarif connu : `totalCost` n'est alors qu'un plancher. */
+  missingCostEntries: number;
+  freshness: "fresh" | "partial" | "stale" | "refreshing" | null;
+  measuredAt: number | null;
+  error: string | null;
+}
+
+export interface OpenClawUsage {
+  quota: QuotaUsage;
+  cost: CostUsage;
 }
 
 export interface StatusPayload {
