@@ -178,7 +178,12 @@ export function LogsPanel({ token, active }: { token: string | null; active: boo
         ) : (
           <div className="divide-y divide-white/4">
             {visibleEntries.map((entry) => (
-              <div key={entry.id} className="grid gap-1 px-4 py-2.5 hover:bg-white/3 sm:grid-cols-[4.5rem_4.5rem_8rem_minmax(0,1fr)] sm:items-start sm:gap-3 lg:px-5">
+              // Colonnes serrées : la largeur d'origine (4,5 + 4,5 + 8 rem)
+              // repoussait le message de 450 px sur un écran large, pour un
+              // alignement que des colonnes plus courtes assurent aussi bien.
+              // Le sous-système reste borné mais peut désormais rétrécir sur
+              // les noms courts, qui sont la majorité.
+              <div key={entry.id} className="grid gap-1 px-4 py-2.5 hover:bg-white/3 sm:grid-cols-[4.5rem_3.5rem_minmax(4rem,7rem)_minmax(0,1fr)] sm:items-baseline sm:gap-3 lg:px-5">
                 <span className="text-[var(--text-muted)]">{formatTime(entry.timestamp)}</span>
                 <span className={`w-fit rounded px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider ${levelStyle(entry.level)}`}>
                   {entry.level}
