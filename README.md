@@ -150,6 +150,39 @@ Arrêt : `sudo launchctl bootout system/com.clawdeck.server`.
 Rollback : `bootout`, restaurer l'ancien plist (ou `git checkout` puis
 réinstaller), relancer le script.
 
+## Sauvegarde et restauration
+
+```bash
+bun scripts/backup.ts [dossier]     # défaut : ./sauvegardes
+```
+
+Deux fichiers seulement, les seuls états non reproductibles :
+
+- `data/gateway-device-identity.json` — la clé Ed25519 qui identifie clawdeck
+  auprès de la gateway. La perdre ne casse rien d'irréversible, mais la
+  gateway traite alors clawdeck comme un **appareil nouveau** : ré-appairage
+  nécessaire, et l'ancienne identité reste dans sa liste.
+- `data/clawdeck.sqlite` — l'historique des pings (7 jours glissants).
+
+La base est copiée par `VACUUM INTO`, pas par une copie de fichier : le
+serveur écrit en journalisation WAL, et copier le seul `.sqlite` pendant qu'il
+tourne peut produire une archive incohérente. L'archive est vérifiée après
+écriture et posée en `0600`.
+
+**`.env` n'est pas inclus** : il porte les deux secrets du déploiement, les
+faire voyager à chaque sauvegarde serait un risque inutile. Le conserver
+séparément.
+
+Restauration : arrêter le service, décompresser dans `data/`, vérifier les
+permissions, redémarrer.
+
+```bash
+sudo launchctl bootout system/com.clawdeck.server
+tar -xzf sauvegardes/clawdeck-AAAAMMJJ-HHMM.tar.gz -C data/
+chmod 600 data/gateway-device-identity.json data/clawdeck.sqlite
+sudo launchctl bootstrap system /Library/LaunchDaemons/com.clawdeck.server.plist
+```
+
 ## Dépannage
 
 - **`/api/status` renvoie `{"error":"unauthorized"}` en l'ouvrant directement

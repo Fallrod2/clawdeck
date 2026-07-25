@@ -9,3 +9,6 @@ data/
 *.sqlite-*
 
 .DS_Store
+
+# Archives de sauvegarde (contiennent l'identité gateway)
+sauvegardes/
