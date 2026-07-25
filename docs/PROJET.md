@@ -308,6 +308,46 @@ contournements** ; c'est bloqué sur l'activation des certificats HTTPS dans la
 console d'administration Tailscale (`tailscale cert` répond « your Tailscale
 account does not support getting TLS certs »).
 
+### Une exception dans `ws.onmessage` tue le processus
+
+C'est le défaut le plus grave rencontré. `handleMessage` déréférençait
+`msg.type` puis `msg.payload.nonce` sans garde ; `JSON.parse("null")` ne lève
+pas, c'est le déréférencement qui tuait. Or **une exception non rattrapée dans
+`ws.onmessage` termine le processus Bun**.
+
+Ce qui rend le point critique : l'émetteur est ce qui occupe le port désigné
+par `GATEWAY_URL` — variable mal réglée, autre service, gateway boguée — et le
+chemin est **pré-authentification**. Une seule frame inattendue tuait le
+dashboard, qui restait mort jusqu'à relance manuelle.
+
+Deux protections, gardes explicites *et* `try/catch` autour du traitement.
+Éprouvé par 6 tests contre une vraie gateway WebSocket factice — le socket
+factice des autres tests appelle `onmessage` dans le contexte du test, ce qui
+masquait exactement ce comportement.
+
+**Règle générale** : tout gestionnaire d'événement de socket doit être
+étanche. Il n'y a personne au-dessus pour rattraper.
+
+### Ce qui vient de la gateway n'est jamais typé
+
+Une clé de session non-chaîne partait telle quelle dans les paramètres de
+`chat.send` et faisait échouer **silencieusement** l'appariement de
+`sessions.list` : un envoi qui ne rejoignait jamais sa session, sans la
+moindre erreur visible. `version` et `uptimeMs` échappaient au même filtre.
+Tout champ lu d'un `hello-ok` passe désormais par une vérification de type.
+
+### Les messages d'erreur sont destinés à l'opérateur
+
+Une réponse Ollama malformée affichait
+`((await res.json()).models ?? []).map is not a function` — du code source
+dans une console d'exploitation. Les causes sont maintenant écrites pour un
+exploitant (« connexion impossible », « réponse illisible », « HTTP 503 ») ;
+le détail brut reste dans le journal serveur.
+
+Corollaire : ne jamais transformer un schéma inattendu en conclusion. Rendre
+une liste de modèles vide aurait annoncé « modèle de repli absent », soit un
+diagnostic, là où l'on ne sait rien de l'état réel.
+
 ### `Bun.serve` tue les flux SSE au bout de 10 secondes
 
 Le défaut `idleTimeout` de Bun ferme toute requête restée **silencieuse** dix
